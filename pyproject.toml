@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magirrep"
+version = "0.1.0"
+description = "Determine the active magnetic irreducible representation from an mCIF file"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "spglib",
+    "spgrep",
+    "pymatgen",
+    "gemmi",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+magirrep = "magirrep.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
