@@ -64,33 +64,57 @@ mCIF file
 - **src/magirrep/parse_mcif.py**: Extracts mCIF fields via gemmi, k-vector via `fractions.Fraction`, transforms via pymatgen `SymmOp`
 - **src/magirrep/little_group.py**: Maps IT→Hall number (spglib cache), retrieves SG operations, filters little group G_k via R^T·k ≡ k (mod Z³)
 - **src/magirrep/mag_rep.py**: Transforms child-cell positions/moments to parent cell; computes magnetic representation characters χ_mag(g) = det(R)·Tr(R)·Σ_fixed exp(-2πi k·L)
-- **src/magirrep/irrep_decompose.py**: Wraps `spgrep.get_spacegroup_irreps_from_primitive_symmetry()`; applies reduction formula
+- **src/magirrep/irrep_decompose.py**: Wraps `spgrep.get_spacegroup_irreps()` via `build_reference_crystal()`; applies reduction formula with `mapping_little_group`
 - **src/magirrep/irrep_label.py**: Minimal stub mapping k-vectors to labels (GM, L, X, M)
 - **scripts/magrep_bilbao_parentdetect.py**: Standalone 600-line alternative implementation with Bilbao HTTP querying and auto parent-cell detection. Has syntax error at line 334. Contains useful logic for D(g) matrices and projection operators not yet in the modular pipeline.
 
 ### Key spgrep API
 
 ```python
-irreps, mapping_little_group = spgrep.get_spacegroup_irreps_from_primitive_symmetry(
-    rotations, translations, kpoint)
-# irreps[alpha][i] is matrix for (rotations[mapping_little_group[i]], translations[mapping_little_group[i]])
-# mapping_little_group: shape (little_group_order,) — indices into the input rotation/translation arrays
-
-# Simpler alternative (handles primitive/conventional internally):
-irreps, mapping = spgrep.get_spacegroup_irreps(hall_number, kpoint)
+# get_spacegroup_irreps takes a crystal (lattice, positions, numbers) and handles
+# primitive/conventional conversion internally.  Returns 4-tuple:
+irreps, rotations, translations, mapping_little_group = spgrep.get_spacegroup_irreps(
+    lattice, positions, numbers, kpoint)
+# irreps[alpha][i] is matrix for the i-th little-group operation
+# mapping_little_group[i] is the index of that op in rotations/translations
+# chi_mag must be computed for ALL rotations, then indexed: chi_lg = chi_mag[mapping_little_group]
 ```
 
-## Known Critical Issues (see docs/plan.md Section 5 for details)
+## Known Issues
 
-**P0**: gemmi not installed — blocks execution.
+**P5 (Irrep labeling) — OPEN**: spgrep's 0-based irrep indices ≠ Bilbao labels. No parity
+suffix (±) is computed. `irrep_label.py` is a minimal stub that returns placeholder names
+like "mGM5" instead of the correct "mGM5-". The correct Bilbao label requires computing the
+character under the inversion/time-reversal element and cross-referencing the Bilbao database.
 
-**P1 (Primitive vs conventional)**: `spglib.get_symmetry_from_database()` returns conventional-cell operations but spgrep needs primitive-cell operations. SG #225 (Fm-3m): 192 conventional vs 48 primitive ops. Fix: use `spgrep.get_spacegroup_irreps(hall_number, kpoint)` which handles this internally.
+## Resolved Issues
 
-**P2 (Transform inversion)**: `map_atoms_to_parent_cell()` applies the child transform *forward* (`M @ r + t`) but needs the *inverse* (`M⁻¹ @ (r - t)`). Hidden for CuMnAs (identity transform), wrong for NiO (diag(2,2,2) doubles instead of halving coordinates).
+**P0 (gemmi)**: gemmi is now installed via `pip install -e ".[dev]"`.
 
-**P3 (spgrep mapping ignored)**: Code ignores `mapping_little_group` — chi_mag is computed for all SG ops while irreps are indexed by little-group ops. The decomposition formula sums mismatched arrays.
+**P1 (Primitive vs conventional)**: `get_little_group_irreps()` now uses
+`spgrep.get_spacegroup_irreps(lattice, positions, numbers, kpoint)` with a reference crystal
+built by `build_reference_crystal()`. spgrep handles the primitive/conventional conversion
+internally; the 192-op conventional Fm-3m cell no longer causes a crash.
 
-**P5 (Irrep labeling)**: spgrep indices ≠ Bilbao labels. No parity suffix computation. Stub only.
+**P2 (Transform direction) — was a false alarm**: `map_atoms_to_parent_cell()` correctly
+implements `r_parent = P @ r_child + p`, which is the proper ITA/Bilbao convention for
+`_parent_transform_Pp_abc`. The CLAUDE.md entry was incorrect.
+
+**P3 (spgrep mapping ignored)**: `decompose()` now takes `mapping_little_group` explicitly and
+uses `chi_lg = chi_mag[mapping_little_group]` with divisor `len(mapping_little_group)`.
+
+**Bug 4 (Zero-moment atoms)**: `run_analysis()` filters out atoms with
+`np.linalg.norm(m_vec) < 0.01` before computing chi_mag. Pymatgen assigns magmom=0 to
+non-magnetic species (Cu, As, O); including them inflated chi_mag.
+
+**Bug 5 (Supercell duplicates)**: `_deduplicate_positions()` collapses repeated parent-cell
+sites that arise when a supercell mCIF is mapped back to the parent cell (e.g., 32 Ni in the
+NiO 2×2×2 supercell → 4 unique conventional-cell positions).
+
+**Bug 6 (Conventional vs primitive for chi_mag)**: `_select_primitive_atoms()` reduces the
+conventional-cell atom list to one representative per primitive cell (e.g., 4 Ni → 1 for
+Fm-3m FCC). spgrep's returned irreps are indexed by primitive-cell operations, so chi_mag
+must also use primitive-cell atoms.
 
 ## Conventions
 

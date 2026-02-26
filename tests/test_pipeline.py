@@ -11,10 +11,11 @@ gemmi = pytest.importorskip("gemmi", reason="gemmi not installed")
 from magirrep.pipeline import run_analysis
 
 
-@pytest.mark.skip(reason="pipeline has known bugs (P1-P3) — enable after fixes")
 class TestPipeline:
     def test_cumnas(self, cumnas_mcif):
+        """CuMnAs should run without error (active irrep: mGM5-, SG#129, k=Gamma)."""
         run_analysis(cumnas_mcif)
 
     def test_nio(self, nio_mcif):
+        """NiO should run without error (active irrep: mL3+, SG#225, k=L)."""
         run_analysis(nio_mcif)

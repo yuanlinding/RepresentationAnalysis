@@ -3,6 +3,8 @@
 import numpy as np
 import pytest
 
+import spglib
+
 from magirrep.little_group import get_hall_number, get_parent_sg_operations
 
 
@@ -11,15 +13,17 @@ class TestGetHallNumber:
         assert get_hall_number(1) == 1
 
     def test_fm3m(self):
-        # SG #225 (Fm-3m) standard Hall number
+        # SG #225 (Fm-3m) has a unique setting — any valid Hall number is fine
         hall = get_hall_number(225)
         assert isinstance(hall, int)
         assert 1 <= hall <= 530
 
-    def test_p4nmm(self):
-        # SG #129 (P4/nmm)
+    def test_p4nmm_prefers_origin_choice_2(self):
+        # SG #129 (P4/nmm) has two origin choices; should return OC2 (Hall 409)
         hall = get_hall_number(129)
-        assert isinstance(hall, int)
+        sg_type = spglib.get_spacegroup_type(hall)
+        choice = sg_type['choice'] if hasattr(sg_type, '__getitem__') else sg_type.choice
+        assert choice == '2', f"Expected origin choice 2, got {choice} (Hall {hall})"
 
     def test_invalid_raises(self):
         with pytest.raises(ValueError):

@@ -1,94 +1,116 @@
 import spglib
 import numpy as np
 
-# Cache for mapping IT number to standard Hall number
+# Cache: IT number -> preferred Hall number (origin choice 2 when available)
 _HALL_NUMBER_CACHE = {}
+
 
 def get_hall_number(it_number: int) -> int:
     """
-    Maps an IT space group number (1-230) to the standard Hall number (1-530).
-    Spgrep uses Hall number for irreps. We return the first (standard) Hall number
-    for the given IT number.
+    Maps an IT space group number (1-230) to the preferred Hall number (1-530).
+
+    Prefers origin choice 2 (centre-of-symmetry origin) over choice 1, matching
+    the Bilbao Crystallographic Server standard used in MAGNDATA mCIF files.
     """
     global _HALL_NUMBER_CACHE
     if not _HALL_NUMBER_CACHE:
+        from collections import defaultdict
+        all_halls: dict = defaultdict(list)
         for hall_no in range(1, 531):
             sg_type = spglib.get_spacegroup_type(hall_no)
-            it_no = sg_type['number']
-            if it_no not in _HALL_NUMBER_CACHE:
-                _HALL_NUMBER_CACHE[it_no] = hall_no
-    
+            # Support both old dict and new attribute interface
+            it_no = sg_type['number'] if hasattr(sg_type, '__getitem__') else sg_type.number
+            choice = sg_type['choice'] if hasattr(sg_type, '__getitem__') else sg_type.choice
+            all_halls[it_no].append((hall_no, choice))
+        for it_no, candidates in all_halls.items():
+            # Prefer origin choice '2' (centrosymmetric origin); fall back to first
+            oc2 = [h for h, c in candidates if c == '2']
+            _HALL_NUMBER_CACHE[it_no] = oc2[0] if oc2 else candidates[0][0]
+
     if it_number not in _HALL_NUMBER_CACHE:
         raise ValueError(f"Invalid IT space group number: {it_number}")
     return _HALL_NUMBER_CACHE[it_number]
 
-def get_parent_sg_operations(it_number: int):
+
+def _lattice_for_crystal_system(it_number: int) -> np.ndarray:
+    """Return a generic unit lattice compatible with the crystal system of *it_number*."""
+    if it_number <= 2:       # Triclinic
+        return np.array([[1.0, 0.1, 0.2], [0.0, 1.0, 0.15], [0.0, 0.0, 1.1]])
+    elif it_number <= 15:    # Monoclinic (unique axis b)
+        return np.array([[1.0, 0.0, 0.3], [0.0, 1.2, 0.0], [0.0, 0.0, 1.0]])
+    elif it_number <= 74:    # Orthorhombic
+        return np.diag([1.0, 1.3, 1.7])
+    elif it_number <= 142:   # Tetragonal
+        return np.diag([1.0, 1.0, 1.5])
+    elif it_number <= 194:   # Trigonal / Hexagonal
+        a, c = 1.0, 1.6
+        return np.array([[a, 0.0, 0.0], [-0.5 * a, 0.866025 * a, 0.0], [0.0, 0.0, c]])
+    else:                    # Cubic (195-230)
+        return np.eye(3)
+
+
+def build_reference_crystal(it_number: int):
     """
-    Retrieves the symmetry operations (rotations, translations) for the parent
-    space group in the standard setting.
+    Build a minimal reference crystal for space group *it_number*.
+
+    Applies all conventional-cell operations to a general position to generate
+    an orbit. The resulting crystal is guaranteed to have exactly the target
+    space group (general Wyckoff position has full multiplicity, avoiding
+    accidental supergroup detection). Uses the preferred Hall number (origin
+    choice 2 when available).
+
+    Returns (lattice, positions, numbers) suitable for spgrep.get_spacegroup_irreps.
     """
     hall_no = get_hall_number(it_number)
-    # spglib.get_symmetry_from_database computes symmetry operations of the specified Hall number
-    # This directly returns the operations of the standard setting for the space group.
     dataset = spglib.get_symmetry_from_database(hall_no)
-    
+    rots = dataset['rotations']
+    trans = dataset['translations']
+
+    # General position — avoid special Wyckoff sites
+    r0 = np.array([0.12345, 0.56789, 0.34567])
+    seen = []
+    for R, t in zip(rots, trans):
+        r = (R.astype(float) @ r0 + t) % 1.0
+        if not any(np.allclose(r, s, atol=1e-5) for s in seen):
+            seen.append(r)
+
+    lattice = _lattice_for_crystal_system(it_number)
+    positions = np.array(seen)
+    numbers = np.ones(len(positions), dtype=int)
+    return lattice, positions, numbers
+
+
+def get_parent_sg_operations(it_number: int):
+    """
+    Retrieve symmetry operations (rotations, translations) for the parent space
+    group in the preferred standard setting (origin choice 2 when available).
+
+    Returns the conventional-cell operations from spglib.
+    """
+    hall_no = get_hall_number(it_number)
+    dataset = spglib.get_symmetry_from_database(hall_no)
+
     if dataset is None:
         raise RuntimeError(f"Could not retrieve symmetry operations for Hall number {hall_no}")
-        
+
     return dataset['rotations'], dataset['translations']
+
 
 def find_little_group(rotations: np.ndarray, translations: np.ndarray, kpoint: np.ndarray, tol=1e-5):
     """
-    Given the space group operations (rotations in reciprocal space are transpose of real space,
-    but here k is a column vector and we use Rk), find the operations that leave k invariant
-    modulo reciprocal lattice vectors (integers).
-    
-    Returns:
-    - R_lk: Rotations of the little group
-    - t_lk: Translations of the little group
-    - indices: The indices of these operations in the original arrays
-    """
-    R_lk = []
-    t_lk = []
-    indices = []
-    
-    for idx, (R, t) in enumerate(zip(rotations, translations)):
-        # R acts on k in reciprocal space as (R^T o k)? Actually no.
-        # If r' = R r + t in real fractional coordinates, then
-        # k' = k R^-1 in row vector notation, or R^T k in column vector notation for standard momentum transform.
-        # But wait! For k as a column vector in fractional reciprocal coordinates,
-        # the action of spatial rotation R on r corresponds to rotation R on k?
-        # Typically, exp(i k . r') = exp(i k . (R r + t)) 
-        # = exp(i (R^T k) . r + i k . t)  =>  k' = R^T k.
-        # Let's use R^T k. Wait, spgrep uses R_p k. We should stick to exactly what spgrep / Bilbao expects.
-        # spgrep documentation:
-        # P k = k + G
-        # Let's check how spgrep computes little group.
-        # Wait, if we use spgrep.get_irreps_from_sgnumber(hall_number, kpoint), spgrep already finds the little group internally!
-        # Do we need to explicitly compute it here?
-        # Our plan states: "For each g=(R,t) in G_k, compute character contributions."
-        # Spgrep will return irreps for operations of the little group.
-        # However, to use the reduction formula n_μ = 1/|G_k| \sum χ_μ * χ_mag
-        # we need to make sure the order of operations exactly matches the order spgrep returns!
-        # spgrep function gives: irreps, mapping. wait, spgrep doesn't easily expose the raw little group operations.
-        # Actually, spgrep exposes get_irreps_from_sgnumber. Its return type needs to be checked.
-        pass
+    Find operations that leave *kpoint* invariant modulo reciprocal lattice vectors.
 
-    # A better approach: We will implement the little group logic here.
-    # The action of rotation R on k is usually k_transformed = R^T @ k or R @ k ?
-    # Let's test what R^T @ k gives vs Bilbao.
-    # Usually: k' = R^T k
+    The little-group condition: R^T k ≡ k  (mod Z³).
+
+    Returns (R_lk, t_lk, indices) — rotations, translations, and their indices
+    in the input arrays.
+    """
+    R_lk, t_lk, indices = [], [], []
     for idx, (R, t) in enumerate(zip(rotations, translations)):
-        # k' = R^T @ k
-        # Is (k' - k) a vector of integers?
         k_prime = R.T @ kpoint
         diff = k_prime - kpoint
-        
-        # Check if diff is integer
-        is_integer = np.allclose(diff - np.round(diff), 0, atol=tol)
-        if is_integer:
+        if np.allclose(diff - np.round(diff), 0, atol=tol):
             R_lk.append(R)
             t_lk.append(t)
             indices.append(idx)
-            
     return np.array(R_lk), np.array(t_lk), indices
