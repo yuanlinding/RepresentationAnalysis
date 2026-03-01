@@ -33,11 +33,20 @@ def get_little_group_irreps(it_number: int, kpoint: np.ndarray):
     return irreps, rotations, translations, mapping_little_group
 
 
-def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray) -> np.ndarray:
+def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray,
+              translations: np.ndarray = None, kpoint=None) -> np.ndarray:
     """
     Decompose the magnetic representation into irreducible representations.
 
-    n_μ = (1/|G_k|) Σ_{g ∈ G_k} χ_μ*(g) χ_mag(g)
+    n_μ = (1/|G_small|) Σ_{g ∈ G_small} χ_μ*(g) χ_mag(g)
+
+    For centered Bravais lattices at zone-boundary k-points (e.g. FCC at k=L),
+    the body-centering translations produce a non-trivial phase system
+    exp(−2πi k·t) ≠ 1.  In that case the returned irreps are small irreps of
+    the *quotient* group G_k/T (the "small group of k"), not ordinary irreps of
+    the full 48-op little group.  The correct normalization then uses only the
+    "small group" operations (those with integer conventional-cell translations,
+    for which exp(−2πi k·t) = 1) and divides by their count.
 
     Parameters
     ----------
@@ -50,13 +59,45 @@ def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray) -> 
         ``get_little_group_irreps``).
     mapping_little_group :
         Indices into ``chi_mag`` selecting the little-group operations.
+    translations : np.ndarray, shape (N_ops, 3), optional
+        Space-group translations (same indexing as mapping_little_group).
+        When provided together with *kpoint*, enables the small-group filter.
+    kpoint : array-like, shape (3,), optional
+        Propagation vector in fractional reciprocal coordinates.
 
     Returns
     -------
     n_mu : np.ndarray
-        Multiplicities (should be non-negative integers for a valid magnetic
+        Multiplicities (non-negative integers for a valid magnetic
         representation).
     """
+    # Determine effective summation domain and normalization.
+    # At zone-boundary k for centered Bravais lattices the body-centering
+    # coset translations give exp(-2πi k·t) ≠ 1, so we restrict to the
+    # "small group" (ops with integer conventional-cell translation).
+    if translations is not None and kpoint is not None:
+        kpt = np.asarray(kpoint, dtype=float)
+        phases = np.array([
+            np.exp(-2j * np.pi * np.dot(kpt, translations[idx]))
+            for idx in mapping_little_group
+        ])
+        if not np.allclose(phases, 1.0, atol=1e-4):
+            # Keep only ops whose translation is a conventional lattice vector
+            small_mask = np.array([
+                np.allclose(translations[idx] % 1.0, 0.0, atol=1e-4)
+                for idx in mapping_little_group
+            ])
+            small_indices = np.where(small_mask)[0]
+            chi_lg = chi_mag[mapping_little_group[small_indices]]
+            n_mu = []
+            for irrep in irreps:
+                chi_irrep = np.array([np.trace(mat) for mat in irrep])
+                chi_irrep_small = chi_irrep[small_indices]
+                n = np.sum(chi_lg * np.conj(chi_irrep_small)) / len(small_indices)
+                n_mu.append(np.real(n))
+            return np.array(n_mu)
+
+    # Standard formula (Gamma-point, primitive-lattice SGs, or no translations given)
     chi_lg = chi_mag[mapping_little_group]
     little_group_order = len(mapping_little_group)
 
@@ -78,3 +119,152 @@ def find_active_irrep(n_mu_array: np.ndarray):
         if n > 1e-3:
             active.append((i, round(n, 3)))
     return active
+
+
+def compute_parity_suffixes(irreps, rotations, mapping_little_group) -> list:
+    """
+    Compute the Bilbao ± parity suffix for each irrep.
+
+    The suffix is determined by the character at the inversion element I = {−E | 0}
+    in the little group:
+        χ^α(I) > 0  →  '+' (gerade)
+        χ^α(I) < 0  →  '−' (ungerade)
+        I ∉ G_k     →  '' (no suffix)
+
+    Parameters
+    ----------
+    irreps :
+        List of irreps; irreps[alpha][i] is the matrix for the i-th little-group op.
+    rotations : np.ndarray, shape (N_ops, 3, 3)
+        All space-group rotations (same indexing as mapping_little_group).
+    mapping_little_group : array-like
+        Indices into rotations selecting the little-group operations.
+
+    Returns
+    -------
+    suffixes : list[str]
+        One string ('+', '-', or '') per irrep.
+    """
+    # Find inversion (R == -I) among little-group operations
+    i_inv = None
+    for i, idx in enumerate(mapping_little_group):
+        if np.allclose(rotations[idx], -np.eye(3)):
+            i_inv = i
+            break
+
+    suffixes = []
+    for irrep in irreps:
+        if i_inv is None:
+            suffixes.append('')
+        else:
+            chi_inv = np.real(np.trace(irrep[i_inv]))
+            suffixes.append('+' if chi_inv > 0 else '-')
+    return suffixes
+
+
+def compute_projection_operators(irreps, D_matrices_lg, mapping_little_group) -> list:
+    """
+    Compute the projection operator onto each irrep subspace.
+
+    P^α = (d_α / |G_k|) Σ_{g ∈ G_k} χ^α*(g) D(g)
+
+    where d_α is the irrep dimension.
+
+    Parameters
+    ----------
+    irreps :
+        List of irreps; irreps[alpha][i] is the d_α×d_α matrix for the i-th op.
+    D_matrices_lg : list[np.ndarray]
+        D matrices for each little-group op, in the same order as mapping_little_group.
+    mapping_little_group : array-like
+
+    Returns
+    -------
+    proj_ops : list[np.ndarray]
+        One 3N×3N Hermitian projection matrix per irrep.
+    """
+    n_lg = len(mapping_little_group)
+    N3 = D_matrices_lg[0].shape[0]
+    proj_ops = []
+    for irrep in irreps:
+        d_alpha = irrep[0].shape[0]
+        chi_irrep = np.array([np.trace(mat) for mat in irrep])
+        P = np.zeros((N3, N3), dtype=complex)
+        for i in range(n_lg):
+            P += np.conj(chi_irrep[i]) * D_matrices_lg[i]
+        P *= d_alpha / n_lg
+        proj_ops.append(P)
+    return proj_ops
+
+
+def compute_basis_vectors(proj_ops, n_atoms, tol=1e-6):
+    """
+    Find symmetry-adapted basis vectors for each irrep via projection + Gram-Schmidt.
+
+    For each irrep α, projects every standard basis vector e_{3i+j} through P^α
+    and orthogonalises the resulting vectors.  The span of {P^α e_i} equals the
+    irrep-α subspace of the magnetic representation.
+
+    Parameters
+    ----------
+    proj_ops : list[np.ndarray]
+        Projection operators P^α, each of shape (3*n_atoms, 3*n_atoms).
+    n_atoms : int
+        Number of magnetic atoms (primitive cell).
+    tol : float
+        Threshold below which a projected vector is considered zero.
+
+    Returns
+    -------
+    all_basis : list[list[np.ndarray]]
+        all_basis[alpha] = list of orthonormal complex basis vectors of shape
+        (3*n_atoms,) spanning the irrep-α subspace.
+        Length = d_α · n_μ for active irreps, 0 for inactive ones.
+    """
+    all_basis = []
+    for P in proj_ops:
+        basis = []
+        for i in range(3 * n_atoms):
+            e = np.zeros(3 * n_atoms, dtype=complex)
+            e[i] = 1.0
+            v = P @ e
+            for b in basis:          # Gram-Schmidt
+                v -= np.vdot(b, v) * b
+            if np.linalg.norm(v) > tol:
+                v /= np.linalg.norm(v)
+                basis.append(v)
+        all_basis.append(basis)
+    return all_basis
+
+
+def identify_active_irrep(active_irreps, projection_ops, moment_vector) -> list:
+    """
+    Identify which active irrep the actual moment vector belongs to.
+
+    For each active irrep α, computes η_α = ‖P^α M‖ / ‖M‖ where M is the
+    stacked moment vector. The irrep with η ≈ 1 is the physically active one.
+
+    Parameters
+    ----------
+    active_irreps : list of (idx, multiplicity)
+        From find_active_irrep().
+    projection_ops : list[np.ndarray]
+        All projection operators (indexed by irrep index).
+    moment_vector : np.ndarray, shape (3*N_prim,)
+        Flattened array of primitive-cell magnetic moments.
+
+    Returns
+    -------
+    identified : list of (idx, multiplicity, eta, M_proj)
+        Sorted by η descending.  M_proj is the raw projected vector.
+    """
+    M_norm = np.linalg.norm(moment_vector)
+    results = []
+    for idx, n in active_irreps:
+        P = projection_ops[idx]
+        M_proj = P @ moment_vector
+        eta = np.linalg.norm(M_proj) / M_norm if M_norm > 1e-10 else 0.0
+        eta = min(1.0, eta)
+        results.append((idx, n, eta, M_proj))
+    results.sort(key=lambda x: -x[2])
+    return results

@@ -13,6 +13,7 @@ dependencies = [
     "spgrep",
     "pymatgen",
     "gemmi",
+    "seekpath",
 ]
 
 [project.optional-dependencies]

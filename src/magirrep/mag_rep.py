@@ -13,7 +13,8 @@ def map_atoms_to_parent_cell(positions, magmoms, child_transform_M, child_transf
     """
     parent_positions = []
     parent_magmoms = []
-    
+    wrap_offsets = []
+
     # Usually: r_child = P_child^-1 r_parent - p_child
     # r_parent = P_child (r_child + p_child)
     # P_child is child_transform_M.
@@ -29,38 +30,147 @@ def map_atoms_to_parent_cell(positions, magmoms, child_transform_M, child_transf
     # r_parent = P @ r_child + p
     # So we just use M @ r_child + t.
     # We apply this first for the child transform, then for the parent transform.
-    
+
     for r, m in zip(positions, magmoms):
         # 1. From child supercell to parent cell
         r_p = child_transform_M @ r + child_transform_t
-        
-        # 2. From parent cell to standard parent setting
-        r_std = parent_transform_M @ r_p + parent_transform_t
-        
-        # Wrapping to [0, 1)
-        r_std = r_std % 1.0
-        
+
+        # 2. From parent cell to standard parent setting (raw, before wrapping)
+        r_std_raw = parent_transform_M @ r_p + parent_transform_t
+
+        # Wrapping to [0, 1); track integer offset for canonical-representative selection
+        r_std = r_std_raw % 1.0
+        L_wrap = np.round(r_std_raw - r_std).astype(int)
+
         # The magnetic moment vector transforms as an axial vector.
-        # m_std = det(P) * P @ m_child
-        # This requires the real-space Cartesian transformation or just fractional?
-        # Typically magnetic moments in mCIF are given in Cartesian axis or Crystal axis?
-        # `_atom_site_moment.crystalaxis_x` implies they are in the basis of the primitive/conventional cell corresponding to the coordinates.
-        # Let's assume they transform covariantly with the lattice (since they are in crystal axis).
-        # Actually, if m is in crystal axis, m = m_1 a + m_2 b + m_3 c.
-        # Thus m transforms exactly like a coordinate displacement vector (a true vector).
-        # m_parent = P @ m_child.
-        # But wait, it's an axial vector! So m_parent = det(P) * P @ m_child.
-        # det(P) is the parity of the transformation. Usually transformations are right-handed, so det(P) > 0.
+        # Only the sign of det(P) matters (handedness correction); using the full det
+        # magnifies moments by scale^3 for pure supercell scalings (e.g. det(2I)=8).
         P1 = child_transform_M
-        m_p = np.linalg.det(P1) * P1 @ m
-        
+        m_p = np.sign(np.linalg.det(P1)) * P1 @ m
+
         P2 = parent_transform_M
-        m_std = np.linalg.det(P2) * P2 @ m_p
-        
+        m_std = np.sign(np.linalg.det(P2)) * P2 @ m_p
+
         parent_positions.append(r_std)
         parent_magmoms.append(m_std)
-        
-    return np.array(parent_positions), np.array(parent_magmoms)
+        wrap_offsets.append(L_wrap)
+
+    return np.array(parent_positions), np.array(parent_magmoms), np.array(wrap_offsets)
+
+def build_mag_rep_matrices(rotations, translations, kpoint, parent_positions,
+                            mapping_little_group, tol=1e-4):
+    """
+    Build the full 3N×3N D(g) matrices of the magnetic representation for each
+    little-group operation.
+
+    For operation g = {R | t}, atom src maps to atom dst with lattice shift L:
+        R @ r_src + t ≈ r_dst + L   (r_dst in parent_positions, L in Z³)
+    Block (dst, src):
+        D(g)[3*dst:3*dst+3, 3*src:3*src+3] = det(R) * R * exp(-2πi k·L)
+
+    Tr(D(g)) == chi_mag(g) for each little-group op (self-consistency check).
+
+    Parameters
+    ----------
+    rotations : np.ndarray, shape (N_ops, 3, 3)
+    translations : np.ndarray, shape (N_ops, 3)
+    kpoint : array-like, shape (3,)
+    parent_positions : np.ndarray, shape (N_prim, 3)
+        Primitive-cell magnetic atom positions in fractional coordinates.
+    mapping_little_group : array-like
+        Indices into rotations/translations for the little-group ops.
+
+    Returns
+    -------
+    D_matrices : list[np.ndarray]
+        One 3N×3N complex matrix per little-group operation, in the same order
+        as mapping_little_group.
+    """
+    N = len(parent_positions)
+    kpoint = np.asarray(kpoint, dtype=float)
+    D_matrices = []
+
+    for idx in mapping_little_group:
+        R = rotations[idx].astype(float)
+        t = translations[idx]
+        det_R = np.linalg.det(R)
+        D = np.zeros((3 * N, 3 * N), dtype=complex)
+
+        for src, r_src in enumerate(parent_positions):
+            r_transformed = R @ r_src + t
+            for dst, r_dst in enumerate(parent_positions):
+                diff = r_transformed - r_dst
+                if np.allclose(diff - np.round(diff), 0, atol=tol):
+                    L = np.round(diff)
+                    phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
+                    D[3*dst:3*dst+3, 3*src:3*src+3] = det_R * R * phase
+                    break  # each src maps to exactly one dst
+
+        D_matrices.append(D)
+
+    return D_matrices
+
+
+def compute_permutation_rep(rotations, translations, kpoint,
+                             parent_positions, mapping_little_group, tol=1e-4):
+    """
+    For each little-group operation compute the permutation representation data.
+
+    Parameters
+    ----------
+    rotations : np.ndarray, shape (N_ops, 3, 3)
+    translations : np.ndarray, shape (N_ops, 3)
+    kpoint : array-like, shape (3,)
+    parent_positions : np.ndarray, shape (N, 3)
+    mapping_little_group : array-like
+
+    Returns
+    -------
+    atom_mappings : list[list[(int, np.ndarray)]]
+        atom_mappings[i][src] = (dst_idx, L_vec) where R@r_src+t ≈ r_dst+L_vec.
+        dst_idx is 0-based; L_vec is integer array of shape (3,).
+    chi_perm : np.ndarray, shape (|G_k|,), complex
+        chi_perm[i] = Σ_{j: R r_j+t ≡ r_j (mod Z³)} exp(−2πi k·L)
+    chi_axial : np.ndarray, shape (|G_k|,), float
+        chi_axial[i] = det(R) · Tr(R)
+    """
+    N = len(parent_positions)
+    kpoint = np.asarray(kpoint, dtype=float)
+
+    atom_mappings = []
+    chi_perm  = np.zeros(len(mapping_little_group), dtype=complex)
+    chi_axial = np.zeros(len(mapping_little_group), dtype=float)
+
+    for i_lg, idx in enumerate(mapping_little_group):
+        R = rotations[idx].astype(float)
+        t = translations[idx]
+        det_R = np.linalg.det(R)
+        tr_R  = np.trace(R)
+        chi_axial[i_lg] = det_R * tr_R
+
+        mappings_this_op = []
+        chi_p = 0.0 + 0.0j
+
+        for src, r_src in enumerate(parent_positions):
+            r_transformed = R @ r_src + t
+            found = False
+            for dst, r_dst in enumerate(parent_positions):
+                diff = r_transformed - r_dst
+                if np.allclose(diff - np.round(diff), 0, atol=tol):
+                    L_vec = np.round(diff).astype(int)
+                    mappings_this_op.append((dst, L_vec))
+                    if src == dst:
+                        chi_p += np.exp(-2j * np.pi * np.dot(kpoint, L_vec))
+                    found = True
+                    break
+            if not found:
+                mappings_this_op.append((-1, np.zeros(3, dtype=int)))
+
+        atom_mappings.append(mappings_this_op)
+        chi_perm[i_lg] = chi_p
+
+    return atom_mappings, chi_perm, chi_axial
+
 
 def compute_characters(R_lk, t_lk, kpoint, mag_positions, tol=1e-4):
     """

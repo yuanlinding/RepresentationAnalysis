@@ -9,6 +9,8 @@ magnetic irreducible representation(s) drive the paramagnetic-to-magnetically-or
 Complements the existing `findmagsym` tool (which finds the magnetic space group) by identifying the
 **active irrep** of the parent space group at propagation vector **k**.
 
+For a full mathematical derivation see `docs/theory.md`.
+
 ## Environment Setup
 
 The project uses the `findmagsym` conda environment:

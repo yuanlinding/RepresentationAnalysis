@@ -3,7 +3,12 @@
 import numpy as np
 import pytest
 
-from magirrep.irrep_decompose import find_active_irrep, decompose
+from magirrep.irrep_decompose import (
+    find_active_irrep,
+    decompose,
+    compute_parity_suffixes,
+    get_little_group_irreps,
+)
 
 
 class TestDecompose:
@@ -79,3 +84,45 @@ class TestFindActiveIrrep:
         result = find_active_irrep(n_mu)
         assert len(result) == 1
         assert result[0][0] == 1
+
+
+class TestComputeParitySuffixes:
+    """Tests for compute_parity_suffixes() using SG #129 at Γ."""
+
+    def test_no_inversion_gives_empty_suffixes(self):
+        """When no inversion is in the little group, all suffixes are ''."""
+        irreps = [[np.eye(2, dtype=complex)]]   # single 1-op irrep
+        rotations = np.array([np.eye(3, dtype=int)])   # identity, not inversion
+        mapping = np.array([0])
+        suffixes = compute_parity_suffixes(irreps, rotations, mapping)
+        assert suffixes == ['']
+
+    def test_sg129_gamma_inversion_found(self):
+        """SG #129 at Γ is centrosymmetric, so parity suffixes must be non-empty."""
+        irreps, rotations, translations, mapping_little_group = get_little_group_irreps(
+            129, np.array([0.0, 0.0, 0.0])
+        )
+        suffixes = compute_parity_suffixes(irreps, rotations, mapping_little_group)
+        # Inversion is in G_k at Gamma for this centrosymmetric SG
+        assert any(s != '' for s in suffixes)
+
+    def test_sg129_gamma_has_exactly_one_ungerade_2d_irrep(self):
+        """4/mmm (SG #129 at Gamma) has exactly one 2D ungerade irrep (Eu)."""
+        irreps, rotations, translations, mapping_little_group = get_little_group_irreps(
+            129, np.array([0.0, 0.0, 0.0])
+        )
+        suffixes = compute_parity_suffixes(irreps, rotations, mapping_little_group)
+        ungerade_2d = [i for i, (irrep, s) in enumerate(zip(irreps, suffixes))
+                       if irrep[0].shape[0] == 2 and s == '-']
+        assert len(ungerade_2d) == 1, (
+            f"Expected exactly one 2D ungerade irrep for SG#129 at Gamma, got indices {ungerade_2d}"
+        )
+
+    def test_suffixes_are_plus_or_minus_or_empty(self):
+        """All suffixes must be '+', '-', or ''."""
+        irreps, rotations, translations, mapping_little_group = get_little_group_irreps(
+            129, np.array([0.0, 0.0, 0.0])
+        )
+        suffixes = compute_parity_suffixes(irreps, rotations, mapping_little_group)
+        for s in suffixes:
+            assert s in ('+', '-', '')
