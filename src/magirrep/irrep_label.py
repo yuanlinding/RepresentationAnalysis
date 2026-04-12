@@ -121,20 +121,25 @@ def kpoint_label(kpoint, it_number: int = None) -> str:
 
 
 def irrep_name(kpoint, sg_number: int, irrep_idx: int, irrep_dim: int,
-               parity: str = '') -> str:
-    """Assemble a Bilbao-style label, e.g. mGM5-.
+               parity: str = '', magnetic: bool = True) -> str:
+    """Assemble a Bilbao-style label, e.g. mGM5- (magnetic) or GM5- (displacive).
 
     Parameters
     ----------
     parity : str
         '+', '-', or '' (no suffix when inversion is not in the little group).
+    magnetic : bool
+        If True (default), prepend 'm' to indicate a magnetic small representation.
+        If False (displacive mode), omit the 'm' prefix.
     """
     k_label = kpoint_label(kpoint, it_number=sg_number)
-    label   = f"m{k_label}{irrep_idx + 1}{parity}"
+    prefix  = 'm' if magnetic else ''
+    label   = f"{prefix}{k_label}{irrep_idx + 1}{parity}"
     return label
 
 
-def bilbao_ordered_labels(kpoint, sg_number: int, irreps, parities) -> dict:
+def bilbao_ordered_labels(kpoint, sg_number: int, irreps, parities,
+                           magnetic: bool = True) -> dict:
     """Assign Bilbao-convention labels by sorting within each parity group by dimension.
 
     Bilbao numbers irreps within each parity group ('+', '-') starting from 1,
@@ -142,13 +147,20 @@ def bilbao_ordered_labels(kpoint, sg_number: int, irreps, parities) -> dict:
     little groups (D4h at Γ, D3d at L, etc.) and correctly identifies the active
     irrep in the CuMnAs and NiO validation cases.
 
+    Parameters
+    ----------
+    magnetic : bool
+        If True (default), prefix labels with 'm' (magnetic small representations).
+        If False (displacive mode), omit the 'm' prefix.
+
     Returns
     -------
-    dict {spgrep_idx: 'm' + k_label + number + parity}
+    dict {spgrep_idx: [m]k_label + number + parity}
     """
     from collections import defaultdict
 
     k_label = kpoint_label(kpoint, it_number=sg_number)
+    prefix  = 'm' if magnetic else ''
     groups  = defaultdict(list)   # parity → [(dim, alpha)]
 
     for alpha, (irr, p) in enumerate(zip(irreps, parities)):
@@ -160,6 +172,6 @@ def bilbao_ordered_labels(kpoint, sg_number: int, irreps, parities) -> dict:
         if p not in groups:
             continue
         for num, (dim, alpha) in enumerate(sorted(groups[p]), start=1):
-            labels[alpha] = f"m{k_label}{num}{p}"
+            labels[alpha] = f"{prefix}{k_label}{num}{p}"
 
     return labels

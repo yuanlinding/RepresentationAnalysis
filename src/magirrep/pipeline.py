@@ -1,5 +1,8 @@
 """Orchestration pipeline: parse -> transform -> irreps -> decompose -> label."""
 
+import contextlib
+import io
+import os
 import sys
 from collections import Counter
 
@@ -8,6 +11,29 @@ import spglib
 
 from magirrep import parse_mcif, mag_rep, irrep_decompose, irrep_label, bilbao_match
 from magirrep.little_group import build_reference_crystal, get_hall_number
+
+
+@contextlib.contextmanager
+def _tee_stdout(filepath):
+    """Print to both terminal and *filepath* simultaneously."""
+    buf = io.StringIO()
+    old = sys.stdout   # save BEFORE class definition so _Tee can close over it
+
+    class _Tee:
+        def write(self, s):
+            old.write(s)    # write to the real terminal (captured in closure)
+            buf.write(s)
+
+        def flush(self):
+            old.flush()
+
+    sys.stdout = _Tee()
+    try:
+        yield
+    finally:
+        sys.stdout = old
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(buf.getvalue())
 
 
 def _dbg(verbose, msg):
@@ -75,39 +101,51 @@ def _select_primitive_atoms(conv_positions: np.ndarray, it_number: int,
     lattices (F, I, A, B, C, R) it reduces e.g. 4 Ni atoms (Fm-3m
     conventional) to 1 Ni (FCC primitive cell).
 
+    Centering translations (e.g. (½,½,0) for C-type) are lattice-parameter
+    independent — they are the same rational fractions for any crystal with
+    that Bravais type.  We use them directly instead of a transformation-
+    matrix derived from a generic reference lattice (which would be wrong for
+    non-cubic systems).
+
     Returns
     -------
     Tuple of whichever of (positions, magmoms, labels) were non-None, or just
     positions if all extras are None.
     """
-    lattice_conv, _, _ = build_reference_crystal(it_number)
-    cell_ref = (lattice_conv, np.array([[0.0, 0.0, 0.0]]), np.array([1]))
-    prim_cell = spglib.find_primitive(cell_ref, symprec=1e-3)
+    # Extract centering translations: pure-translation ops (R = Identity) from
+    # the space-group symmetry database, in conventional fractional coordinates.
+    hall_no = get_hall_number(it_number)
+    sg_ops = spglib.get_symmetry_from_database(hall_no)
+    eye3 = np.eye(3, dtype=int)
+    centering: list = []
+    for R, t in zip(sg_ops['rotations'], sg_ops['translations']):
+        if np.allclose(R, eye3, atol=1e-5):
+            ct = t % 1.0
+            if not any(np.allclose(ct, c, atol=1e-5) for c in centering):
+                centering.append(ct)
 
-    if prim_cell is None:
-        if magmoms is not None and labels is not None:
-            return conv_positions, magmoms, labels
-        elif magmoms is not None:
-            return conv_positions, magmoms
-        elif labels is not None:
-            return conv_positions, labels
-        return conv_positions
-
-    prim_lattice = prim_cell[0]
-    P = prim_lattice @ np.linalg.inv(lattice_conv)
-    P_inv_T = np.linalg.inv(P.T)
-
-    seen_prim: list = []
+    # Keep one atom per centering orbit.  Atom j is a duplicate of already-kept
+    # atom i if  r_j ≡ r_i + ct  (mod Z³)  for some centering vector ct.
     kept_idx: list = []
-    result: list = []
-    for i, r_conv in enumerate(conv_positions):
-        r_prim = (P_inv_T @ r_conv) % 1.0
-        if not any(np.allclose(r_prim, s, atol=tol) for s in seen_prim):
-            seen_prim.append(r_prim)
-            result.append(r_conv)
-            kept_idx.append(i)
+    kept_pos: list = []   # mod-1 positions of atoms already kept
 
-    result_pos = np.array(result) if result else np.zeros((0, 3))
+    for i, r in enumerate(conv_positions):
+        r_mod = r % 1.0
+        is_dup = False
+        for r_kept in kept_pos:
+            for ct in centering:
+                diff = (r_mod - r_kept - ct) % 1.0
+                diff = np.where(diff > 0.5, diff - 1.0, diff)  # fold to (−½, ½]
+                if np.all(np.abs(diff) < tol):
+                    is_dup = True
+                    break
+            if is_dup:
+                break
+        if not is_dup:
+            kept_idx.append(i)
+            kept_pos.append(r_mod)
+
+    result_pos = conv_positions[kept_idx] if kept_idx else np.zeros((0, 3))
     if magmoms is not None and labels is not None:
         result_mag    = magmoms[kept_idx] if kept_idx else np.zeros((0, 3))
         result_labels = [labels[i] for i in kept_idx]
@@ -247,6 +285,27 @@ def _seitz(R, t):
     return f"{{{sym} | {t_str}}}"
 
 
+def _seitz_to_xyz(R, t):
+    """Convert (3×3 int rotation, 3-float translation) to xyz string like '-x+1/2,-y+1/2,z'."""
+    from fractions import Fraction
+    vars_ = ['x', 'y', 'z']
+    parts = []
+    for row_i, ti in zip(R, t):
+        terms = []
+        for c, v in zip(row_i, vars_):
+            ic = int(round(c))
+            if ic == 1:    terms.append(f'+{v}')
+            elif ic == -1: terms.append(f'-{v}')
+            elif ic != 0:  terms.append(f'+{ic}{v}')
+        if abs(ti) > 1e-9:
+            frac = Fraction(float(ti)).limit_denominator(12)
+            s = f'+{frac}' if frac > 0 else str(frac)
+            terms.append(s)
+        s = ''.join(terms).lstrip('+') or '0'
+        parts.append(s)
+    return ','.join(parts)
+
+
 def _dedup_lg_ops(mapping_little_group, rotations):
     """Return (i_lg, idx) pairs keeping one representative per unique rotation R.
 
@@ -369,18 +428,97 @@ def _crystal_system(it_number: int) -> str:
     return 'Cubic'
 
 
-def _get_wyckoff_sites(it_number: int, parent_positions: np.ndarray) -> list:
+def _atomic_number(label: str) -> int:
+    """Atomic number from element or species string (e.g. 'Mn', 'Sr2+', 'O2-')."""
+    from pymatgen.core.periodic_table import get_el_sp
+    try:
+        return int(get_el_sp(label).Z)
+    except Exception:
+        return 1
+
+
+def _get_wyckoff_sites(it_number: int, parent_positions: np.ndarray,
+                       labels: list = None) -> list:
     """Return Wyckoff letter for each atom in *parent_positions*."""
     ref_lattice, _, _ = build_reference_crystal(it_number)
-    numbers = np.ones(len(parent_positions), dtype=int)
-    dataset = spglib.get_symmetry_dataset(
-        (ref_lattice, parent_positions, numbers), symprec=1e-3
-    )
+    hall_no = get_hall_number(it_number)
+    if labels is not None:
+        numbers = [_atomic_number(lbl) for lbl in labels]
+    else:
+        numbers = list(np.ones(len(parent_positions), dtype=int))
+
+    # Extract centering translations (pure-translation ops: R = Identity)
+    sg_ops = spglib.get_symmetry_from_database(hall_no)
+    eye3 = np.eye(3, dtype=int)
+    centering = []
+    for R, t in zip(sg_ops['rotations'], sg_ops['translations']):
+        if np.allclose(R, eye3, atol=1e-5):
+            ct = t % 1.0
+            if not any(np.allclose(ct, c, atol=1e-5) for c in centering):
+                centering.append(ct)
+
+    # Expand primitive representatives to the full conventional cell
+    exp_positions = []
+    exp_numbers = []
+    orig_exp_idx = []  # index in exp_positions for each original atom
+    for i, (r, n) in enumerate(zip(parent_positions, numbers)):
+        first = True
+        for ct in centering:
+            r_exp = (r + ct) % 1.0
+            if not any(np.allclose(r_exp, ep, atol=1e-4) for ep in exp_positions):
+                exp_positions.append(r_exp)
+                exp_numbers.append(n)
+                if first:
+                    orig_exp_idx.append(len(exp_positions) - 1)
+                    first = False
+        if first:  # no copy was added (shouldn't happen, but be safe)
+            orig_exp_idx.append(len(exp_positions) - 1)
+
+    try:
+        dataset = spglib.get_symmetry_dataset(
+            (ref_lattice, np.array(exp_positions), np.array(exp_numbers)),
+            symprec=1e-3, hall_number=hall_no
+        )
+    except Exception:
+        dataset = None
+    # Fallback: partial structure may have higher apparent symmetry than the parent SG
+    # (e.g. 2 identical atoms at (0,0,0)+(½,½,½) look body-centred), so retry without
+    # the hall_number constraint and let spglib auto-detect.
+    if dataset is None:
+        try:
+            dataset = spglib.get_symmetry_dataset(
+                (ref_lattice, np.array(exp_positions), np.array(exp_numbers)),
+                symprec=1e-3
+            )
+        except Exception:
+            dataset = None
     if dataset is None:
         return ['?' for _ in parent_positions]
     wyckoffs = (dataset.wyckoffs if hasattr(dataset, 'wyckoffs')
                 else dataset['wyckoffs'])
-    return [str(w) for w in wyckoffs]
+    return [str(wyckoffs[idx]) for idx in orig_exp_idx]
+
+
+def _get_wyckoff_groups(it_number, positions, labels):
+    """Group atoms by (species_label, wyckoff_letter).
+
+    Returns list of (group_name, atom_indices) in order of first appearance.
+    Atoms at the same Wyckoff site with the same element form one orbit.
+    """
+    wyckoffs = _get_wyckoff_sites(it_number, positions, labels)
+    seen_keys = []
+    key_to_indices = {}
+    for i, (lbl, wy) in enumerate(zip(labels, wyckoffs)):
+        key = (lbl, wy)
+        if key not in key_to_indices:
+            seen_keys.append(key)
+            key_to_indices[key] = []
+        key_to_indices[key].append(i)
+    result = []
+    for key in seen_keys:
+        species, wy = key
+        result.append((f"{species} ({wy})", np.array(key_to_indices[key])))
+    return result
 
 
 def _print_sg_info(it_number: int):
@@ -446,29 +584,33 @@ def _print_propagation_and_lg(kpoint, mapping_little_group, rotations, translati
     if is_gamma:
         print(f"  Little co-group G⁰_k (point group of wave vector): {co_group}")
 
-    # Column width for the {R|t} Seitz symbol
+    # Column widths for {R|t} Seitz symbol and xyz form
     seitz_w = max(20, max(len(_seitz(rotations[idx], translations[idx]))
                           for _, idx in dedup) + 1)
-    print(f"  {'#':>3}  {'{{R | t}}':<{seitz_w}}")
-    print("  " + "-" * (6 + seitz_w))
+    xyz_w   = max(16, max(len(_seitz_to_xyz(rotations[idx], translations[idx]))
+                          for _, idx in dedup) + 1)
+    print(f"  {'#':>3}  {'{{R | t}}':<{seitz_w}}  {'xyz form':<{xyz_w}}")
+    print("  " + "-" * (6 + seitz_w + 2 + xyz_w))
 
     for i, (_i_lg, idx) in enumerate(dedup):
         R = rotations[idx]
         t = translations[idx]
-        print(f"  {i+1:>3}  {_seitz(R, t):<{seitz_w}}")
+        print(f"  {i+1:>3}  {_seitz(R, t):<{seitz_w}}  {_seitz_to_xyz(R, t):<{xyz_w}}")
     print()
 
 
 def _print_wyckoff_and_permutation(it_number, parent_positions, atom_labels,
                                     perm_data, kpoint,
-                                    mapping_little_group, rotations, translations):
+                                    mapping_little_group, rotations, translations,
+                                    mode='magnetic'):
     """Sections (4)+(5): Wyckoff sites and permutation of the Wyckoff orbit."""
     atom_mappings, _chi_perm, _chi_axial = perm_data
     N = len(parent_positions)
 
-    wyckoffs = _get_wyckoff_sites(it_number, parent_positions)
+    wyckoffs = _get_wyckoff_sites(it_number, parent_positions, atom_labels)
 
-    print("(4) MAGNETIC ATOMS — WYCKOFF SITES")
+    atom_header = "MAGNETIC ATOMS" if mode == 'magnetic' else "ATOMS (DISPLACIVE MODE)"
+    print(f"(4) {atom_header} — WYCKOFF SITES")
     print(f"  {'#':>3}  {'Element':<8}  {'Wyckoff':<8}  Fractional coordinates")
     print("  " + "-" * 56)
     for i, (r, lbl, wy) in enumerate(zip(parent_positions, atom_labels, wyckoffs)):
@@ -509,8 +651,13 @@ def _print_wyckoff_and_permutation(it_number, parent_positions, atom_labels,
 
 
 def _print_representation_characters(mapping_little_group, rotations, translations,
-                                      perm_data, chi_mag, verbose=False):
-    """Section (6): Per-operation χ_perm, χ_axial, χ_mag (one row per unique {R|t})."""
+                                      perm_data, chi_rep, verbose=False,
+                                      mode='magnetic'):
+    """Section (6): Per-operation χ_perm, χ_axial, χ_rep (one row per unique {R|t}).
+
+    mode='magnetic': chi_axial = det(R)·Tr(R), output labelled χ_mag
+    mode='displacive':   chi_axial = Tr(R),         output labelled χ_disp
+    """
     _atom_mappings, chi_perm, chi_axial = perm_data
 
     def _fmtc(z, w=9):
@@ -527,14 +674,26 @@ def _print_representation_characters(mapping_little_group, rotations, translatio
     op_w   = max(20, max(len(_seitz(rotations[idx], translations[idx]))
                          for _, idx in dedup) + 1)
 
+    rep_label = "χ_mag" if mode == 'magnetic' else "χ_disp"
+
     print("(6) REPRESENTATION ANALYSIS")
     print("  χ_perm(g)  = Σ_{fixed atoms} exp(−2πi k·L)")
-    print("  χ_axial(g) = det(R) · Tr(R)")
-    print("  χ_mag(g)   = χ_perm × χ_axial")
+    if mode == 'magnetic':
+        print("  χ_axial(g) = det(R) · Tr(R)")
+        print(f"  χ_mag(g)   = χ_perm × χ_axial")
+    else:
+        print("  χ_polar(g) = Tr(R)  [polar vector, no det factor]")
+        print(f"  χ_disp(g)  = χ_perm × χ_polar")
     print()
-    print(f"  {'#':>3}  {'{{R | t}}':<{op_w}}  {'χ_perm':>9}  {'det(R)':>7}  {'Tr(R)':>6}  "
-          f"{'χ_axial':>9}  {'χ_mag':>9}")
-    print("  " + "-" * (6 + op_w + 62))
+
+    if mode == 'magnetic':
+        print(f"  {'#':>3}  {'{{R | t}}':<{op_w}}  {'χ_perm':>9}  {'det(R)':>7}  {'Tr(R)':>6}  "
+              f"{'χ_axial':>9}  {rep_label:>9}")
+        print("  " + "-" * (6 + op_w + 62))
+    else:
+        print(f"  {'#':>3}  {'{{R | t}}':<{op_w}}  {'χ_perm':>9}  {'Tr(R)':>6}  "
+              f"{'χ_polar':>9}  {rep_label:>9}")
+        print("  " + "-" * (6 + op_w + 54))
 
     for i, (i_lg, idx) in enumerate(dedup):
         R     = rotations[idx].astype(float)
@@ -542,16 +701,21 @@ def _print_representation_characters(mapping_little_group, rotations, translatio
         tr_R  = int(round(np.trace(R)))
         cp    = chi_perm[i_lg]
         ca    = chi_axial[i_lg]
-        cm    = chi_mag[idx]
+        cm    = chi_rep[idx]
         op_str = _seitz(rotations[idx], translations[idx])
-        print(f"  {i+1:>3}  {op_str:<{op_w}}  {_fmtc(cp):>9}  {det_R:>+7}  {tr_R:>6}  "
-              f"  {ca:>+9.4f}  {_fmtc(cm):>9}")
+        if mode == 'magnetic':
+            print(f"  {i+1:>3}  {op_str:<{op_w}}  {_fmtc(cp):>9}  {det_R:>+7}  {tr_R:>6}  "
+                  f"  {ca:>+9.4f}  {_fmtc(cm):>9}")
+        else:
+            print(f"  {i+1:>3}  {op_str:<{op_w}}  {_fmtc(cp):>9}  {tr_R:>6}  "
+                  f"  {ca:>+9.4f}  {_fmtc(cm):>9}")
     print()
 
 
 def _print_character_table(irreps, parities, rotations, translations,
                             mapping_little_group, kpoint, it_number,
-                            active_irreps=None, bilbao_labels=None):
+                            active_irreps=None, bilbao_labels=None,
+                            mode='magnetic'):
     """Section (7): Small representations of the little group G_k (space group irreps).
 
     Columns = conjugacy classes of G_k as a space group (sorted E, C6…C2, i, S3…m).
@@ -595,7 +759,7 @@ def _print_character_table(irreps, parities, rotations, translations,
     lw  = 10
     cw  = max(6, max(len(l) for l in col_labels) + 1)
 
-    active_set = {idx for idx, *_ in (active_irreps or [])}
+    active_set = {idx for idx, *_ in (active_irreps or [])} if mode == 'magnetic' else set()
 
     print("(7) SMALL REPRESENTATIONS OF G_k  (space group irreps, χ = Tr[Γ_k({R|t})])")
     hdr = f"  {'Irrep':<{lw}}  d  |"
@@ -621,9 +785,141 @@ def _print_character_table(irreps, parities, rotations, translations,
     print()
 
 
+def _decomp_str(n_mu_array, irreps, parities, bilbao_labels, kpoint, it_number):
+    """Return a compact decomposition string like '1·mGM5- ⊕ 2·mGM1+'."""
+    def _lbl(alpha):
+        if bilbao_labels and alpha in bilbao_labels:
+            return bilbao_labels[alpha]
+        d = irreps[alpha][0].shape[0]
+        p = parities[alpha] if parities else ''
+        return irrep_label.irrep_name(kpoint, it_number, alpha, d, p)
+
+    def _nstr(n):
+        return str(int(round(n))) if abs(n - round(n)) < 0.01 else f"{n:.3f}"
+
+    active = [(i, n_mu_array[i]) for i in range(len(n_mu_array)) if abs(n_mu_array[i]) > 0.001]
+    terms = [f"{_nstr(n)}·{_lbl(idx)}" for idx, n in active]
+    return "  ⊕  ".join(terms) if terms else "0"
+
+
+def _print_decomposition_extended(
+        n_mu_mag, n_mu_perm_mag,
+        n_mu_mech, n_mu_perm_all,
+        n_mu_axial, n_mu_polar,
+        irreps, bilbao_labels, identified, identified_mech,
+        kpoint, it_number, parities,
+        wyckoff_mech=None, wyckoff_perm=None):
+    """Section (8): Extended decomposition with Γ_perm, Γ_axial, Γ_polar, Γ_mag, Γ_mech.
+
+    n_mu_mag / n_mu_perm_mag may be None for displacive-only runs.
+    n_mu_mech / n_mu_perm_all may be None for magnetic-only runs.
+    wyckoff_mech: list of (group_name, n_mu_wyck) for per-Wyckoff-site Γ_mech breakdown.
+    wyckoff_perm: list of (group_name, n_mu_wyck) for per-Wyckoff-site Γ_perm breakdown.
+    """
+    def _ds(n_mu):
+        return _decomp_str(n_mu, irreps, parities, bilbao_labels, kpoint, it_number)
+
+    def _lbl(alpha):
+        if bilbao_labels and alpha in bilbao_labels:
+            return bilbao_labels[alpha]
+        d = irreps[alpha][0].shape[0]
+        p = parities[alpha] if parities else ''
+        return irrep_label.irrep_name(kpoint, it_number, alpha, d, p)
+
+    def _nstr(n):
+        return str(int(round(n))) if abs(n - round(n)) < 0.01 else f"{n:.3f}"
+
+    SEP = "─" * 66
+
+    print("(8) DECOMPOSITION INTO SMALL REPRESENTATIONS OF G_k\n")
+    print(f"  {'Representation':<18}  Decomposition")
+    print(f"  {SEP}")
+
+    # ── Magnetic block ────────────────────────────────────────────────────────
+    if n_mu_mag is not None:
+        print(f"  Γ_perm  [mag]    = {_ds(n_mu_perm_mag)}")
+        print(f"  Γ_axial           = {_ds(n_mu_axial)}        (χ = det(R)·Tr(R))")
+        print(f"  Γ_mag   = Γ_perm ⊗ Γ_axial")
+        print(f"           = {_ds(n_mu_mag)}    ← primary result")
+        print()
+
+    # ── Displacive/mechanical block ─────────────────────────────────────────────
+    if n_mu_mech is not None:
+        print(f"  Γ_perm  [all]    = {_ds(n_mu_perm_all)}")
+        if wyckoff_perm:
+            name_w = max(len(g) for g, _ in wyckoff_perm)
+            print(f"  Per-Wyckoff-site contributions to Γ_perm:")
+            for group_name, n_mu_wyck in wyckoff_perm:
+                print(f"    Γ_perm({group_name:<{name_w}}) = {_ds(n_mu_wyck)}")
+        print(f"  Γ_polar           = {_ds(n_mu_polar)}        (χ = Tr(R))")
+        print(f"  Γ_mech  = Γ_perm ⊗ Γ_polar")
+        print(f"           = {_ds(n_mu_mech)}  [total]")
+        print()
+        if wyckoff_mech:
+            # Determine the maximum group-name width for alignment
+            name_w = max(len(g) for g, _ in wyckoff_mech)
+            print(f"  Per-Wyckoff-site contributions to Γ_mech:")
+            for group_name, n_mu_wyck in wyckoff_mech:
+                print(f"    Γ_mech({group_name:<{name_w}}) = {_ds(n_mu_wyck)}")
+            print()
+
+    # ── Reference Γ_axial for displacive-only mode ────────────────────────────────
+    if n_mu_mag is None and n_mu_mech is not None:
+        print(f"  Γ_axial           = {_ds(n_mu_axial)}        (χ = det(R)·Tr(R))   [reference]")
+        print()
+
+    # ── Summary table ─────────────────────────────────────────────────────────
+    has_mag  = n_mu_mag  is not None
+    has_mech = n_mu_mech is not None
+    # displacive-only mode: omit "← ACTIVE" markers (all active irreps are displacive branches)
+    displacive_only = (not has_mag and has_mech)
+
+    n_mu_a = n_mu_mag  if has_mag  else np.zeros(len(irreps))
+    n_mu_m = n_mu_mech if has_mech else np.zeros(len(irreps))
+
+    all_active = sorted(set(
+        [i for i in range(len(irreps)) if abs(n_mu_a[i]) > 0.001] +
+        [i for i in range(len(irreps)) if abs(n_mu_m[i]) > 0.001]
+    ), key=lambda i: _lbl(i))
+
+    if not all_active:
+        return
+
+    eta_map   = {idx: eta for idx, _n, eta, _ in (identified or [])}
+    best_mag  = identified[0][0]       if identified       else None
+    best_mech = identified_mech[0][0]  if identified_mech  else None
+
+    if has_mag and has_mech:
+        print(f"  {'Irrep':<12}  {'dim':>4}  {'n_μ(mag)':>9}  {'n_μ(mech)':>10}  {'η':>7}")
+        print("  " + "─" * 50)
+    elif has_mag:
+        print(f"  {'Irrep':<12}  {'dim':>4}  {'n_μ(mag)':>9}  {'η':>7}")
+        print("  " + "─" * 40)
+    else:
+        print(f"  {'Irrep':<12}  {'dim':>4}  {'n_μ(mech)':>10}")
+        print("  " + "─" * 30)
+
+    for idx in all_active:
+        d   = irreps[idx][0].shape[0]
+        lbl = _lbl(idx)
+        eta = eta_map.get(idx, 0.0)
+        n_m = n_mu_a[idx]
+        n_p = n_mu_m[idx]
+
+        if has_mag and has_mech:
+            marker = "  ← ACTIVE" if idx == best_mag else ""
+            print(f"  {lbl:<12}  {d:>4}  {_nstr(n_m):>9}  {_nstr(n_p):>10}  {eta:>7.3f}{marker}")
+        elif has_mag:
+            marker = "  ← ACTIVE" if idx == best_mag else ""
+            print(f"  {lbl:<12}  {d:>4}  {_nstr(n_m):>9}  {eta:>7.3f}{marker}")
+        else:
+            print(f"  {lbl:<12}  {d:>4}  {_nstr(n_p):>10}")
+    print()
+
+
 def _print_decomposition(active_irreps, irreps, n_mu_array, bilbao_labels,
-                          identified, kpoint, it_number, parities):
-    """Section (8): Decomposition of Γ_mag into small representations of G_k."""
+                          identified, kpoint, it_number, parities, mode='magnetic'):
+    """Section (8): Decomposition of Γ_mag/Γ_mech into small representations of G_k."""
     def _lbl(alpha):
         if bilbao_labels and alpha in bilbao_labels:
             return bilbao_labels[alpha]
@@ -636,11 +932,13 @@ def _print_decomposition(active_irreps, irreps, n_mu_array, bilbao_labels,
 
     terms = [f"{_nstr(n)}·{_lbl(idx)}" for idx, n in active_irreps]
 
+    gamma_label = "Γ_mag" if mode == 'magnetic' else "Γ_mech"
+
     print("(8) DECOMPOSITION INTO SMALL REPRESENTATIONS OF G_k")
     if terms:
-        print("  Γ_mag  =  " + "  ⊕  ".join(terms))
+        print(f"  {gamma_label}  =  " + "  ⊕  ".join(terms))
     else:
-        print("  Γ_mag  =  0  (no active small representations found)")
+        print(f"  {gamma_label}  =  0  (no active small representations found)")
     print()
 
     if active_irreps:
@@ -690,12 +988,14 @@ def _fmt_bv_val(x):
 
 def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions,
                           identified, bilbao_labels, kpoint, it_number,
-                          parities, irreps):
-    """Section (9): Symmetry-adapted basis vectors in Bilbao-style table.
+                          parities, irreps, mode='magnetic', wyckoff_groups=None):
+    """Section (9): Symmetry-adapted basis vectors.
 
-    Columns: IR | BV | m1a m1b m1c | m2a m2b m2c | ...
-    Values are scaled to the smallest-integer representation (min nonzero = ±1).
-    The IR label is printed only on the first row of each irrep.
+    mode='magnetic': one monolithic table with all atoms; columns m1a m1b ...;
+                     IR label shown on every row; active irrep marked.
+    mode='displacive' with wyckoff_groups: one sub-table per Wyckoff site;
+                     columns show only atoms in that site; IR label on every row;
+                     BVs with all-zero components at that site are skipped.
     BV indices ψ_n are numbered globally across all active irreps.
     """
     def _lbl(alpha):
@@ -709,18 +1009,82 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
     eta_map  = {idx: eta for idx, _n, eta, _m in (identified or [])}
     best_idx = identified[0][0] if identified else None
 
-    # Column labels: m1a m1b m1c m2a ...
-    axes      = ['a', 'b', 'c']
-    comp_hdrs = [f"m{a+1}{ax}" for a in range(N) for ax in axes]
-    cw = max(4, max(len(h) for h in comp_hdrs) + 1)   # data column width
+    # Pre-assign global BV numbers
+    bv_numbers = {}   # (irrep_idx, local_i) -> global_num
+    bv_count = 0
+    for idx, _n in active_irreps:
+        for i in range(len(all_basis[idx])):
+            bv_count += 1
+            bv_numbers[(idx, i)] = bv_count
 
-    # IR and BV column widths
+    axes = ['a', 'b', 'c']
+
+    # ── Per-Wyckoff mode (displacive) ────────────────────────────────────────────
+    if wyckoff_groups is not None:
+        ir_w = max(8, max((len(_lbl(idx)) for idx, _ in active_irreps), default=8))
+
+        print("(9) BASIS VECTORS PER WYCKOFF SITE  [displacive mode]\n")
+
+        for group_name, site_indices in wyckoff_groups:
+            n_site = len(site_indices)
+            # Number atoms within this site: Mn1, Mn2, ...
+            site_elem = atom_labels[site_indices[0]]
+            site_numbered = [f"{atom_labels[si]}{j+1}" for j, si in enumerate(site_indices)]
+            col_hdrs = [f"{sn}{ax}" for sn in site_numbered for ax in axes]
+            cw = max(4, max(len(h) for h in col_hdrs) + 1)
+            bv_w = max(4, len(f"ψ{bv_count}") + 1)
+
+            # Site header
+            pos_strs = [f"({parent_positions[si, 0]:.4f},{parent_positions[si, 1]:.4f},"
+                        f"{parent_positions[si, 2]:.4f})" for si in site_indices]
+            atom_info = "  ".join(f"{site_numbered[j]} {pos_strs[j]}"
+                                   for j in range(n_site))
+            print(f"  ── {group_name}:  {atom_info}")
+
+            hdr = f"  {'IR':<{ir_w}}  {'BV':<{bv_w}}"
+            sep = f"  {'':-<{ir_w}}  {'':-<{bv_w}}"
+            for h in col_hdrs:
+                hdr += f"  {h:>{cw}}"
+                sep += f"  {'':->{cw}}"
+            print(hdr)
+            print(sep)
+
+            any_row = False
+            for idx, _n in active_irreps:
+                lbl = _lbl(idx)
+                first_at_site = True
+                for i, v in enumerate(all_basis[idx]):
+                    # Extract components for atoms in this Wyckoff group
+                    site_vals = np.array([v[3 * si + c]
+                                          for si in site_indices for c in range(3)])
+                    if np.all(np.abs(site_vals) < 1e-4):
+                        continue  # this BV has no weight at this site
+                    global_bv = bv_numbers[(idx, i)]
+                    scaled = _scale_to_integers(np.real(site_vals))
+                    bv_label = f"ψ{global_bv}"
+                    ir_field = lbl if first_at_site else ""
+                    row = f"  {ir_field:<{ir_w}}  {bv_label:<{bv_w}}"
+                    for val in scaled:
+                        row += f"  {_fmt_bv_val(val):>{cw}}"
+                    print(row)
+                    any_row = True
+                    first_at_site = False
+
+            if not any_row:
+                print("  (no basis vectors at this site)")
+            print()
+
+        return
+
+    # ── Monolithic mode (magnetic, or displacive without grouping) ───────────────
+    col_prefix = 'm' if mode == 'magnetic' else 'u'
+    comp_hdrs  = [f"{col_prefix}{a+1}{ax}" for a in range(N) for ax in axes]
+    cw  = max(4, max(len(h) for h in comp_hdrs) + 1)
     ir_w = max(8, max((len(_lbl(idx)) for idx, _ in active_irreps), default=8))
-    bv_w = 3
+    bv_w = max(3, len(f"ψ{bv_count}") + 1)
 
     print("(9) BASIS VECTORS OF ACTIVE SMALL REPRESENTATIONS\n")
 
-    # Header row
     hdr = f"  {'IR':<{ir_w}}  {'BV':<{bv_w}}"
     sep = f"  {'':-<{ir_w}}  {'':-<{bv_w}}"
     for h in comp_hdrs:
@@ -729,8 +1093,7 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
     print(hdr)
     print(sep)
 
-    bv_num = 0
-    for idx, n in active_irreps:
+    for idx, _n in active_irreps:
         lbl        = _lbl(idx)
         eta        = eta_map.get(idx, 0.0)
         basis_vecs = all_basis[idx]
@@ -738,24 +1101,22 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
 
         if not basis_vecs:
             row = f"  {lbl:<{ir_w}}  {'—':<{bv_w}}  (no basis vectors found)"
-            if is_active:
+            if is_active and mode == 'magnetic':
                 row += f"  ← ACTIVE  η={eta:.3f}"
             print(row)
             continue
 
-        first = True
-        for v in basis_vecs:
-            bv_num  += 1
-            v_sc     = _scale_to_integers(np.real(v))
-            ir_field = lbl if first else ""
-            bv_label = f"ψ{bv_num}"
+        for i, v in enumerate(basis_vecs):
+            global_bv = bv_numbers[(idx, i)]
+            v_sc      = _scale_to_integers(np.real(v))
+            bv_label  = f"ψ{global_bv}"
+            ir_field  = lbl if i == 0 else ""
             row = f"  {ir_field:<{ir_w}}  {bv_label:<{bv_w}}"
             for val in v_sc:
                 row += f"  {_fmt_bv_val(val):>{cw}}"
-            if first and is_active:
+            if i == 0 and is_active and mode == 'magnetic':
                 row += f"  ← ACTIVE  η={eta:.3f}"
             print(row)
-            first = False
 
     print()
 
@@ -850,6 +1211,82 @@ def _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
     print()
 
 
+def _format_sk_constraints(irrep_idx, n_mu, eta, all_basis, atom_labels, parent_positions,
+                            bilbao_labels, kpoint, it_number, parities, irreps,
+                            mode='magnetic'):
+    """Print Fourier coefficient constraints Sk(j) for the given irrep.
+
+    For irrep with basis vectors ψ_1 … ψ_d (each length 3N), the Fourier
+    coefficient at atom j is M_j = Σ_i α_i · ψ_i[3j:3j+3].
+    Parameter names: α_1=u, α_2=v, α_3=w, ...
+    mode='magnetic': header says "active irrep"; mode='displacive': "irrep".
+    """
+    def _lbl(alpha):
+        if bilbao_labels and alpha in bilbao_labels:
+            return bilbao_labels[alpha]
+        d = irreps[alpha][0].shape[0]
+        p = parities[alpha] if parities else ''
+        return irrep_label.irrep_name(kpoint, it_number, alpha, d, p)
+
+    label      = _lbl(irrep_idx)
+    basis_vecs = all_basis[irrep_idx] if irrep_idx < len(all_basis) else []
+    N          = len(parent_positions)
+    d          = len(basis_vecs)
+
+    if d == 0:
+        return
+
+    param_names = ['u', 'v', 'w', 'p', 'q', 'r', 's', 't', 'a', 'b'][:d]
+
+    # Scale each basis vector to smallest-integer representation
+    scaled = [_scale_to_integers(np.real(bv)) for bv in basis_vecs]
+
+    prefix = "active irrep" if mode == 'magnetic' else "irrep"
+    print(f"  Fourier coefficient constraints  "
+          f"({prefix} {label},  n={int(round(n_mu))},  η={eta:.3f}):\n")
+
+    lbl_w = max(6, max(len(l) for l in atom_labels))
+    print(f"    {'Atom':<{lbl_w}}  {'Fractional position':<30}  Sk constraint")
+    print("    " + "─" * (lbl_w + 2 + 30 + 2 + 30))
+
+    free_params = []
+    for j in range(N):
+        r = parent_positions[j]
+        components = []
+        for c in range(3):
+            terms = []
+            for sc, pname in zip(scaled, param_names):
+                coef = float(sc[3 * j + c])
+                iv = int(round(coef))
+                if abs(coef - iv) > 0.02:
+                    if abs(coef) > 1e-4:
+                        terms.append(f"{coef:+.3f}{pname}")
+                else:
+                    if iv == 0:
+                        continue
+                    elif iv == 1:
+                        terms.append(f"+{pname}")
+                    elif iv == -1:
+                        terms.append(f"-{pname}")
+                    else:
+                        terms.append(f"{iv:+d}{pname}")
+            expr = ''.join(terms).lstrip('+') if terms else '0'
+            components.append(expr)
+
+        pos_str = f"({r[0]:.4f}, {r[1]:.4f}, {r[2]:.4f})"
+        sk_str  = f"({', '.join(components)})"
+        print(f"    {atom_labels[j]:<{lbl_w}}  {pos_str:<30}  {sk_str}")
+
+    # Collect free parameters: any param whose basis vector has at least one nonzero component
+    for i, pname in enumerate(param_names):
+        if np.any(np.abs(scaled[i]) > 1e-4):
+            free_params.append(pname)
+
+    print()
+    print(f"    Free parameters: {', '.join(free_params)}")
+    print()
+
+
 def _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
                        parities, irreps):
     """Print validation line comparing identified irrep to stored _irrep_id."""
@@ -877,8 +1314,13 @@ def _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
     print()
 
 
-def run_analysis(mcif_path: str, verbose: bool = False):
-    """Run the full magnetic irrep analysis pipeline on *mcif_path*."""
+def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
+                 displacive_pass: bool = True):
+    """Run the full magnetic irrep analysis pipeline on *mcif_path*.
+
+    displacive_pass=True (default): also compute Γ_mech and per-Wyckoff displacive decomposition.
+    displacive_pass=False: magnetic analysis only (faster; no displacive block in output).
+    """
 
     # ── 1. Parse fields ───────────────────────────────────────────────────────
     fields = parse_mcif.parse_mcif_fields(mcif_path)
@@ -899,33 +1341,71 @@ def run_analysis(mcif_path: str, verbose: bool = False):
 
     # ── 2. Extract nonzero-moment atoms + species labels ─────────────────────
     structure = parse_mcif.get_magnetic_structure(mcif_path)
+    # Parse 3D crystal-axis moments directly from mCIF (avoids pymatgen reading
+    # _atom_site_moment.magnitude as a scalar instead of crystalaxis_x/y/z vector)
+    gemmi_moments = parse_mcif.parse_moments_from_mcif(mcif_path)
+    # Map explicitly listed atom positions to their 3D moments.  This lets us
+    # distinguish the reference atom from its symmetry-generated equivalents
+    # (which share the same site label in pymatgen but may have opposite moment sign).
+    gemmi_explicit_pos = parse_mcif.parse_explicit_atom_positions(mcif_path)
+    explicit_pos_to_moment = {
+        lbl: (np.array(pos) % 1.0, gemmi_moments[lbl])
+        for lbl, pos in gemmi_explicit_pos.items()
+        if lbl in gemmi_moments
+    }
+
     mag_positions = []
     magmoms       = []
     atom_labels   = []
 
     for site in structure:
+        site_pos = site.frac_coords % 1.0
+        site_label = getattr(site, 'label', None) or site.properties.get('label', '')
         raw_m = site.properties.get("magmom")
-        if raw_m is None:
-            raw_m = getattr(site, "magmom", None)
 
-        if raw_m is not None:
-            if hasattr(raw_m, 'global_moment'):
-                m_vec = raw_m.global_moment
-            elif hasattr(raw_m, 'moment'):
-                m_vec = raw_m.moment
+        # 1. Position-based match: explicitly listed atom → use gemmi 3D vector as-is
+        m_vec = None
+        for _lbl, (ep, em) in explicit_pos_to_moment.items():
+            if np.allclose(site_pos, ep, atol=1e-3):
+                m_vec = em
+                break
+
+        if m_vec is None and site_label and site_label in gemmi_moments:
+            # 2. Label match for symmetry-generated equivalent: apply pymatgen's
+            #    signed scalar to re-orient the reference direction vector.
+            #    (Covers collinear AFM where equiv atoms have opposite sign.)
+            m_ref = gemmi_moments[site_label]
+            ref_norm = np.linalg.norm(m_ref)
+            if ref_norm > 1e-8 and raw_m is not None:
+                try:
+                    scalar = float(raw_m)
+                    m_vec = (scalar / ref_norm) * m_ref
+                except (TypeError, ValueError):
+                    m_vec = m_ref
             else:
-                m_vec = raw_m
+                m_vec = m_ref
 
-            m_vec = np.array(m_vec)
+        if m_vec is None:
+            # 3. Fall back to pymatgen's raw magmom property
+            if raw_m is None:
+                raw_m = getattr(site, "magmom", None)
+            if raw_m is None:
+                continue
+            if hasattr(raw_m, 'moment'):
+                m_vec = np.array(raw_m.moment)
+            elif hasattr(raw_m, 'global_moment'):
+                m_vec = np.array(raw_m.global_moment)
+            else:
+                m_vec = np.array(raw_m)
             if m_vec.shape == () or m_vec.shape == (1,):
                 m_vec = np.array([0.0, 0.0, float(m_vec)])
 
-            if np.linalg.norm(m_vec) < 0.01:
-                continue
+        if np.linalg.norm(m_vec) < 0.01:
+            continue
 
-            mag_positions.append(site.frac_coords)
-            magmoms.append(m_vec)
-            atom_labels.append(site.species_string)
+        mag_positions.append(site.frac_coords)
+        magmoms.append(m_vec)
+        atom_labels.append(site.species_string)
 
     mag_positions = np.array(mag_positions)
     magmoms       = np.array(magmoms)
@@ -1025,30 +1505,432 @@ def run_analysis(mcif_path: str, verbose: bool = False):
 
     identified = irrep_decompose.identify_active_irrep(active_irreps, proj_ops, moment_vector)
 
-    # ── 12. Compute symmetry-adapted basis vectors ────────────────────────────
+    # ── 12. Compute symmetry-adapted basis vectors (magnetic atoms) ───────────
     all_basis = irrep_decompose.compute_basis_vectors(proj_ops, len(parent_positions))
 
-    # ── 13. Print full Bertaut-style report ───────────────────────────────────
-    print(f"=== Magnetic Irrep Analysis:  {mcif_path} ===\n")
+    # ── 13. Single-op reps + Γ_perm[mag] (always computed) ───────────────────
+    chi_axial_sg = np.array([
+        np.linalg.det(rotations[i].astype(float)) * np.trace(rotations[i].astype(float))
+        for i in range(len(rotations))])
+    chi_polar_sg = np.array([
+        np.trace(rotations[i].astype(float)) for i in range(len(rotations))])
+    chi_perm_mag_sg = mag_rep.compute_perm_characters_all(
+        rotations, translations, kpoint, parent_positions)
 
-    _print_sg_info(it_number)
-    _print_propagation_and_lg(kpoint, mapping_little_group, rotations, translations,
-                               it_number=it_number)
-    _print_wyckoff_and_permutation(it_number, parent_positions, atom_labels,
-                                   perm_data, kpoint,
-                                   mapping_little_group, rotations, translations)
-    _print_representation_characters(mapping_little_group, rotations, translations,
-                                     perm_data, chi_mag, verbose=verbose)
-    _print_character_table(irreps, parities, rotations, translations,
-                           mapping_little_group, kpoint, it_number,
-                           active_irreps=active_irreps,
-                           bilbao_labels=bilbao_labels)
-    _print_decomposition(active_irreps, irreps, n_mu_array, bilbao_labels,
-                         identified, kpoint, it_number, parities)
-    _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions,
-                         identified, bilbao_labels, kpoint, it_number, parities, irreps)
-    _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
-                               atom_labels, parent_positions, identified,
-                               bilbao_labels, kpoint, it_number, parities, irreps)
-    _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
-                      parities, irreps)
+    n_mu_perm_mag = irrep_decompose.decompose(
+        irreps, chi_perm_mag_sg, mapping_little_group,
+        translations=translations, kpoint=kpoint)
+    n_mu_axial = irrep_decompose.decompose(
+        irreps, chi_axial_sg, mapping_little_group,
+        translations=translations, kpoint=kpoint)
+    n_mu_polar = irrep_decompose.decompose(
+        irreps, chi_polar_sg, mapping_little_group,
+        translations=translations, kpoint=kpoint)
+
+    # ── 14. Displacive pass — all atoms (optional) ────────────────────────────────
+    n_mu_mech = None
+    n_mu_perm_all = None
+    all_par_pos = None
+    all_labels = None
+    N_all = 0
+    all_basis_mech = {}
+    active_mech = []
+    identified_mech = []
+    dim_check_mech = 0.0
+    wyckoff_mech_decomps = []
+
+    if displacive_pass:
+        all_positions_raw = np.array([site.frac_coords for site in structure])
+        all_labels_raw    = [site.species_string for site in structure]
+        zero_magmoms_raw  = np.zeros((len(all_positions_raw), 3))
+
+        all_par_pos, _, all_wrap_off = mag_rep.map_atoms_to_parent_cell(
+            all_positions_raw, zero_magmoms_raw, child_M, child_t, parent_M, parent_t)
+        all_par_pos, all_labels = _deduplicate_positions(
+            all_par_pos, offsets=all_wrap_off, labels=all_labels_raw)
+        all_par_pos, all_labels = _select_primitive_atoms(
+            all_par_pos, it_number, labels=all_labels)
+        N_all = len(all_par_pos)
+
+        D_displacive_lg = mag_rep.build_displacive_rep_matrices(
+            rotations, translations, kpoint, all_par_pos, mapping_little_group)
+        chi_phon = mag_rep.compute_displacive_characters(
+            rotations, translations, kpoint, all_par_pos)
+
+        perm_data_all_raw = mag_rep.compute_permutation_rep(
+            rotations, translations, kpoint, all_par_pos, mapping_little_group)
+        atom_mappings_all, chi_perm_all_lg, _ = perm_data_all_raw
+        chi_axial_phon_all = np.array([
+            np.trace(rotations[idx].astype(float)) for idx in mapping_little_group])
+
+        n_mu_mech = irrep_decompose.decompose(
+            irreps, chi_phon, mapping_little_group,
+            translations=translations, kpoint=kpoint)
+        active_mech = irrep_decompose.find_active_irrep(n_mu_mech)
+        dim_check_mech = sum(n * irreps[idx][0].shape[0] for idx, n in active_mech)
+
+        proj_ops_all   = irrep_decompose.compute_projection_operators(
+            irreps, D_displacive_lg, mapping_little_group)
+        all_basis_mech = irrep_decompose.compute_basis_vectors(proj_ops_all, N_all)
+
+        def _sort_mech(item):
+            idx, n = item
+            return (-round(n), irreps[idx][0].shape[0])
+        identified_mech = [(idx, n, 1.0, None)
+                           for idx, n in sorted(active_mech, key=_sort_mech)]
+
+        # ── 14. Γ_perm[all] decomposition (unique to displacive pass) ────────────
+        chi_perm_all_sg = mag_rep.compute_perm_characters_all(
+            rotations, translations, kpoint, all_par_pos)
+        n_mu_perm_all = irrep_decompose.decompose(
+            irreps, chi_perm_all_sg, mapping_little_group,
+            translations=translations, kpoint=kpoint)
+
+        # Per-Wyckoff displacive decompositions
+        for group_name, indices in _get_wyckoff_groups(it_number, all_par_pos, all_labels):
+            chi_wyck = mag_rep.compute_displacive_characters(
+                rotations, translations, kpoint, all_par_pos[indices])
+            n_mu_wyck = irrep_decompose.decompose(
+                irreps, chi_wyck, mapping_little_group,
+                translations=translations, kpoint=kpoint)
+            wyckoff_mech_decomps.append((group_name, n_mu_wyck))
+
+    n_mu_mag = n_mu_array   # alias for clarity in _print_decomposition_extended
+
+    # ── 15. Print full Bertaut-style report ───────────────────────────────────
+    _cm = _tee_stdout(output_file) if output_file else contextlib.nullcontext()
+    with _cm:
+        print(f"=== Magnetic Irrep Analysis:  {mcif_path} ===\n")
+
+        _print_sg_info(it_number)
+        _print_propagation_and_lg(kpoint, mapping_little_group, rotations, translations,
+                                   it_number=it_number)
+        _print_wyckoff_and_permutation(it_number, parent_positions, atom_labels,
+                                       perm_data, kpoint,
+                                       mapping_little_group, rotations, translations)
+        _print_representation_characters(mapping_little_group, rotations, translations,
+                                         perm_data, chi_mag, verbose=verbose)
+        _print_character_table(irreps, parities, rotations, translations,
+                               mapping_little_group, kpoint, it_number,
+                               active_irreps=active_irreps,
+                               bilbao_labels=bilbao_labels)
+        _print_decomposition_extended(
+            n_mu_mag, n_mu_perm_mag,
+            n_mu_mech, n_mu_perm_all,
+            n_mu_axial, n_mu_polar,
+            irreps, bilbao_labels, identified, identified_mech,
+            kpoint, it_number, parities,
+            wyckoff_mech=wyckoff_mech_decomps if displacive_pass else None)
+        _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions,
+                             identified, bilbao_labels, kpoint, it_number, parities, irreps)
+        if identified:
+            best_idx, n_best, eta_best, _ = identified[0]
+            _format_sk_constraints(best_idx, n_best, eta_best, all_basis, atom_labels,
+                                   parent_positions, bilbao_labels, kpoint, it_number,
+                                   parities, irreps, mode='magnetic')
+        if displacive_pass and active_mech:
+            _print_basis_vectors(active_mech, all_basis_mech, all_labels, all_par_pos,
+                                 identified_mech, bilbao_labels, kpoint, it_number,
+                                 parities, irreps, mode='displacive')
+        _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
+                                   atom_labels, parent_positions, identified,
+                                   bilbao_labels, kpoint, it_number, parities, irreps)
+        _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
+                          parities, irreps)
+        if displacive_pass:
+            print(f"  Σ n_μ·d_μ (mech) = {dim_check_mech:.3f}  "
+                  f"(expected 3×N_all = {3*N_all})")
+            print()
+
+
+def _get_it_number_from_structure(structure) -> int:
+    """Use spglib to get the IT (international table) number from a pymatgen Structure."""
+    from pymatgen.core import Element
+    cell = (
+        structure.lattice.matrix,
+        structure.frac_coords,
+        [Element(s.specie.symbol).Z for s in structure],
+    )
+    dataset = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+    if dataset is None:
+        raise RuntimeError("spglib could not determine the space group of the structure.")
+    return int(dataset.number if hasattr(dataset, 'number') else dataset['number'])
+
+
+def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = False,
+                        output_file: str = None,
+                        distort_amplitude: float = None,
+                        keep_magnetic: bool = False,
+                        out_dir: str = None):
+    """Run displacive/mechanical representation analysis on *path* (mCIF or CIF).
+
+    For mCIF input: k and IT# are read from the mCIF metadata.  ALL atoms are
+    used (no magnetic-moment filter).  Transforms from the mCIF are applied.
+    For plain CIF input: IT# is determined from spglib; k comes from *kvector_str*
+    (default '0,0,0' → Γ-point).
+
+    If *distort_amplitude* is set, distorted CIF files are generated per
+    (active irrep, Wyckoff site, basis vector) after the analysis.
+    """
+    from pymatgen.core import Structure
+
+    # ── 1. Parse input file ───────────────────────────────────────────────────
+    try:
+        fields = parse_mcif.parse_mcif_fields(path)
+        is_mcif = True
+    except Exception:
+        fields = {}
+        is_mcif = False
+
+    if is_mcif:
+        kpoint    = parse_mcif.parse_kvector(fields['kvector_str'])
+        it_number = fields['it_number']
+        child_M, child_t = parse_mcif.parse_transform(fields['child_transform_str'])
+        if 'parent_transform_str' in fields:
+            parent_M, parent_t = parse_mcif.parse_transform(fields['parent_transform_str'])
+        else:
+            parent_M, parent_t = np.eye(3), np.zeros(3)
+        structure = parse_mcif.get_magnetic_structure(path)
+    else:
+        # Plain CIF
+        structure = Structure.from_file(path)
+        it_number = _get_it_number_from_structure(structure)
+        kv_str    = kvector_str if kvector_str is not None else "0,0,0"
+        kpoint    = parse_mcif.parse_kvector(kv_str)
+        child_M, child_t   = np.eye(3), np.zeros(3)
+        parent_M, parent_t = np.eye(3), np.zeros(3)
+
+    _dbg(verbose, f"Displacive mode — IT number: {it_number}")
+    _dbg(verbose, f"k-vector: {kpoint}")
+
+    # ── 2. Collect ALL atoms (no magmom filter) ───────────────────────────────
+    all_positions = []
+    atom_labels   = []
+    all_magmoms   = []   # real moments (if mCIF) or zeros (CIF)
+
+    for site in structure:
+        all_positions.append(site.frac_coords)
+        atom_labels.append(site.species_string)
+        if is_mcif and 'magmom' in site.properties and site.properties['magmom'] is not None:
+            m = site.properties['magmom']
+            all_magmoms.append(list(m) if hasattr(m, '__iter__') else [0.0, 0.0, float(m)])
+        else:
+            all_magmoms.append([0.0, 0.0, 0.0])
+
+    all_positions = np.array(all_positions)
+    all_magmoms   = np.array(all_magmoms)
+
+    if len(all_positions) == 0:
+        print("No atoms found in the structure.")
+        import sys; sys.exit(1)
+
+    _dbg(verbose, f"Total atoms from structure: {len(all_positions)}")
+
+    # ── 3. Transform to parent cell ───────────────────────────────────────────
+    parent_positions, parent_magmoms, wrap_offsets = mag_rep.map_atoms_to_parent_cell(
+        all_positions, all_magmoms, child_M, child_t, parent_M, parent_t
+    )
+
+    # ── 4. Deduplicate + reduce to primitive cell ─────────────────────────────
+    n_before_dedup = len(parent_positions)
+    parent_positions, parent_magmoms, atom_labels = _deduplicate_positions(
+        parent_positions, magmoms=parent_magmoms, offsets=wrap_offsets, labels=atom_labels)
+    _dbg(verbose, f"Deduplication: {n_before_dedup} → {len(parent_positions)} atoms")
+
+    n_before_prim = len(parent_positions)
+    parent_positions, parent_magmoms, atom_labels = _select_primitive_atoms(
+        parent_positions, it_number, magmoms=parent_magmoms, labels=atom_labels)
+    _dbg(verbose, f"Primitive selection: {n_before_prim} → {len(parent_positions)} atoms")
+
+    if len(parent_positions) == 0:
+        print("No atoms found in primitive cell after transformation.")
+        import sys; sys.exit(1)
+
+    N_prim = len(parent_positions)
+
+    # ── 5. Get irreps from spgrep ─────────────────────────────────────────────
+    irreps, rotations, translations, mapping_little_group = irrep_decompose.get_little_group_irreps(
+        it_number, kpoint
+    )
+
+    _dbg(verbose, f"spgrep: {len(rotations)} total SG ops, "
+                  f"|G_k| = {len(mapping_little_group)}, "
+                  f"{len(irreps)} irreps")
+
+    if len(irreps) == 0:
+        print("Spgrep returned no irreps.")
+        import sys; sys.exit(1)
+
+    # ── 6. Build D(g) matrices (displacive/polar-vector version) ────────────────
+    D_matrices_lg = mag_rep.build_displacive_rep_matrices(
+        rotations, translations, kpoint, parent_positions, mapping_little_group
+    )
+
+    # ── 7. Compute χ_disp (no det factor) ────────────────────────────────────
+    # compute_displacive_characters takes the full rotations/translations arrays
+    # and returns chi for ALL ops (indexed by all op index, not lg index).
+    chi_disp = mag_rep.compute_displacive_characters(
+        rotations, translations, kpoint, parent_positions
+    )
+
+    if verbose:
+        chi_lg = chi_disp[mapping_little_group]
+        _dbg(verbose, f"chi_disp summary: "
+                      f"max|Re| = {np.max(np.abs(chi_lg.real)):.4f}, "
+                      f"chi(E) = {chi_lg[0].real:.4f}  "
+                      f"[expected = {3 * N_prim:.0f} for identity]")
+
+    # ── 8. Permutation representation data ───────────────────────────────────
+    # For displacive mode chi_axial = Tr(R). compute_permutation_rep returns
+    # chi_axial = det(R)·Tr(R), so we override it for display.
+    perm_data_raw = mag_rep.compute_permutation_rep(
+        rotations, translations, kpoint, parent_positions, mapping_little_group
+    )
+    atom_mappings, chi_perm, _chi_axial_mag = perm_data_raw
+
+    # Recompute chi_axial for displacive (Tr(R) only)
+    chi_axial_phon = np.array([
+        np.trace(rotations[idx].astype(float))
+        for idx in mapping_little_group
+    ])
+    perm_data = (atom_mappings, chi_perm, chi_axial_phon)
+
+    # ── 9. Decompose ──────────────────────────────────────────────────────────
+    n_mu_array    = irrep_decompose.decompose(irreps, chi_disp, mapping_little_group,
+                                               translations=translations, kpoint=kpoint)
+    active_irreps = irrep_decompose.find_active_irrep(n_mu_array)
+
+    _dbg(verbose, f"Decomposition: {len(active_irreps)} active irreps out of {len(irreps)}")
+
+    # Cross-check: Σ n_μ d_μ should equal 3*N_prim
+    dim_check = sum(n * irreps[idx][0].shape[0] for idx, n in active_irreps)
+    _dbg(verbose, f"Σ n_μ·d_μ = {dim_check:.3f}  (expected 3×{N_prim} = {3*N_prim})")
+
+    # ── 10. Parity, projection operators, Bilbao labels ──────────────────────
+    parities  = irrep_decompose.compute_parity_suffixes(irreps, rotations, mapping_little_group)
+    proj_ops  = irrep_decompose.compute_projection_operators(
+        irreps, D_matrices_lg, mapping_little_group)
+
+    bilbao_labels = bilbao_match.match_irreps(
+        irreps, rotations, translations, mapping_little_group, it_number, kpoint)
+    if bilbao_labels is None:
+        bilbao_labels = irrep_label.bilbao_ordered_labels(
+            kpoint, it_number, irreps, parities, magnetic=False)
+        _dbg(verbose, "Bilbao REPRES unavailable — using dimension-sorted labels")
+
+    # ── 11. Identify leading irrep (no observed displacement vector for displacive) ─
+    # Sort by n_μ descending (ties broken by dimension ascending).
+    # η is set to 1.0 for all active irreps (no projection metric without obs. displacements).
+    if active_irreps:
+        def _sort_key(item):
+            idx, n = item
+            d = irreps[idx][0].shape[0]
+            return (-round(n), d)
+        identified = [(idx, n, 1.0, None)
+                      for idx, n in sorted(active_irreps, key=_sort_key)]
+    else:
+        identified = []
+
+    # ── 12. Compute symmetry-adapted basis vectors ────────────────────────────
+    all_basis = irrep_decompose.compute_basis_vectors(proj_ops, N_prim)
+
+    # ── 12b. Γ_perm, Γ_axial, Γ_polar decompositions (displacive mode) ───────────
+    chi_perm_all_sg = mag_rep.compute_perm_characters_all(
+        rotations, translations, kpoint, parent_positions)
+    chi_axial_sg = np.array([
+        np.linalg.det(rotations[i].astype(float)) * np.trace(rotations[i].astype(float))
+        for i in range(len(rotations))])
+    chi_polar_sg = np.array([
+        np.trace(rotations[i].astype(float)) for i in range(len(rotations))])
+
+    n_mu_perm_all = irrep_decompose.decompose(
+        irreps, chi_perm_all_sg, mapping_little_group,
+        translations=translations, kpoint=kpoint)
+    n_mu_axial = irrep_decompose.decompose(
+        irreps, chi_axial_sg, mapping_little_group,
+        translations=translations, kpoint=kpoint)
+    n_mu_polar = irrep_decompose.decompose(
+        irreps, chi_polar_sg, mapping_little_group,
+        translations=translations, kpoint=kpoint)
+
+    # Per-Wyckoff decompositions (Γ_perm and Γ_mech)
+    wyckoff_groups = _get_wyckoff_groups(it_number, parent_positions, atom_labels)
+    wyckoff_perm_decomps = []
+    wyckoff_mech_decomps = []
+    for group_name, indices in wyckoff_groups:
+        chi_perm_wyck = mag_rep.compute_perm_characters_all(
+            rotations, translations, kpoint, parent_positions[indices])
+        n_mu_perm_wyck = irrep_decompose.decompose(
+            irreps, chi_perm_wyck, mapping_little_group,
+            translations=translations, kpoint=kpoint)
+        wyckoff_perm_decomps.append((group_name, n_mu_perm_wyck))
+
+        chi_wyck = mag_rep.compute_displacive_characters(
+            rotations, translations, kpoint, parent_positions[indices])
+        n_mu_wyck = irrep_decompose.decompose(
+            irreps, chi_wyck, mapping_little_group,
+            translations=translations, kpoint=kpoint)
+        wyckoff_mech_decomps.append((group_name, n_mu_wyck))
+
+    n_mu_mech = n_mu_array   # alias for _print_decomposition_extended
+
+    # ── 13. Print full Bertaut-style report ───────────────────────────────────
+    _cm = _tee_stdout(output_file) if output_file else contextlib.nullcontext()
+    with _cm:
+        print(f"=== Displacive Mode Analysis:  {path} ===\n")
+
+        _print_sg_info(it_number)
+        _print_propagation_and_lg(kpoint, mapping_little_group, rotations, translations,
+                                   it_number=it_number)
+        _print_wyckoff_and_permutation(it_number, parent_positions, atom_labels,
+                                       perm_data, kpoint,
+                                       mapping_little_group, rotations, translations,
+                                       mode='displacive')
+        _print_representation_characters(mapping_little_group, rotations, translations,
+                                         perm_data, chi_disp, verbose=verbose,
+                                         mode='displacive')
+        _print_character_table(irreps, parities, rotations, translations,
+                               mapping_little_group, kpoint, it_number,
+                               bilbao_labels=bilbao_labels,
+                               mode='displacive')
+        _print_decomposition_extended(
+            None, None,
+            n_mu_mech, n_mu_perm_all,
+            n_mu_axial, n_mu_polar,
+            irreps, bilbao_labels, [], identified,
+            kpoint, it_number, parities,
+            wyckoff_mech=wyckoff_mech_decomps,
+            wyckoff_perm=wyckoff_perm_decomps)
+        _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions,
+                             identified, bilbao_labels, kpoint, it_number, parities,
+                             irreps, mode='displacive', wyckoff_groups=wyckoff_groups)
+        # Section (9b): Displacement constraints Sk(j) for each active displacive irrep
+        if active_irreps:
+            print("(9b) DISPLACEMENT CONSTRAINTS  Sk(j)  [displacive mode]\n")
+            sorted_active = sorted(active_irreps,
+                                   key=lambda x: bilbao_labels.get(x[0], f"z{x[0]}"))
+            for irrep_idx, n_mu in sorted_active:
+                _format_sk_constraints(irrep_idx, n_mu, 1.0, all_basis, atom_labels,
+                                       parent_positions, bilbao_labels, kpoint, it_number,
+                                       parities, irreps, mode='displacive')
+        # Section (10) moment-consistency is skipped for displacive mode
+        print(f"  Σ n_μ·d_μ = {dim_check:.3f}  (expected 3×N_prim = {3*N_prim})")
+        print()
+
+    # ── Distorted CIF generation (optional) ───────────────────────────────────
+    if distort_amplitude is not None and active_irreps:
+        from magirrep.distort import generate_distorted_cifs
+        do_magnetic = keep_magnetic and is_mcif
+        moms_for_distort = parent_magmoms if do_magnetic else None
+        generated = generate_distorted_cifs(
+            path, parent_positions, atom_labels, it_number, kpoint,
+            child_M, structure, all_basis, active_irreps, bilbao_labels,
+            wyckoff_groups, amplitude=distort_amplitude,
+            keep_magnetic=do_magnetic,
+            parent_magmoms=moms_for_distort,
+            out_dir=out_dir,
+        )
+        print(f"\n  Generated {len(generated)} distorted CIF file(s):")
+        for f in generated:
+            print(f"    {f}")
+        print()

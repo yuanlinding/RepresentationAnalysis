@@ -1,0 +1,648 @@
+  
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++
+   +++ PROGRAM:BasIreps (Version 5.00, July 2016)    +++
+   +++                  (JRC- ILL)                   +++
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+  The calculation of the IRREPS of the little group is based in 
+  the procedure of ZAK provided within the program KAREP       
+  E. Hovestreydt, I. Aroyo et al, J.Appl.Cryst. 25, 544 (1992) 
+  Program based in CrysFML (Crystallographic Fortran-95 Modules Library)
+  BasIreps -> (Version 4.10, November 2012), ILL-Juan Rodriguez-Carvajal  
+  
+ => Title:
+ => Short output selected. 
+ => Symbol of the space group: 129
+ => The given space group 129 is standard, IT generators will be used 
+ => List of space group generators:  -x+1/2,-y+1/2,z; -y+1/2,x,z; -x,y+1/2,-z; -x,-y,-z
+ => Propagation vector:   0.0000  0.0000  0.0000
+ => BZ-point labelled as GM
+ => The representations of Gk will be calculated 
+  
+  
+
+
+        Information on Space Group: 
+        --------------------------- 
+
+ =>   Number of Space group: 129
+ =>  Hermann-Mauguin Symbol: P 4/n m m
+ =>             Hall Symbol: -P 4a 2a
+ =>            Setting Type: Generated from explicit IT generators
+ =>          Crystal System: Tetragonal
+ =>              Laue Class: 4/mmm
+ =>             Point Group: 4/mmm
+ =>         Bravais Lattice: P
+ =>          Lattice Symbol: tP
+ =>  Reduced Number of S.O.:   8
+ =>    General multiplicity:  16
+ =>          Centrosymmetry: Centric (-1 at origin)
+ =>  Generators (exc. -1&L):   3
+ =>         Asymmetric unit: -0.250 <= x <=  0.250
+                             -0.250 <= y <=  0.250
+                              0.000 <= z <=  0.500
+ => Centring vectors:  0
+                                                                                                    
+
+ => List of all Symmetry Operators and Symmetry Symbols
+
+ => SYMM(  1): x,y,z                             Symbol: 1
+ => SYMM(  2): -x+1/2,-y+1/2,z                   Symbol: 2 1/4,1/4,z
+ => SYMM(  3): -y+1/2,x,z                        Symbol: 4+ 1/4,1/4,z
+ => SYMM(  4): -x,y+1/2,-z                       Symbol: 2 (0,1/2,0) 0,y,0
+ => SYMM(  5): y,-x+1/2,z                        Symbol: 4- 1/4,1/4,z
+ => SYMM(  6): x+1/2,-y,-z                       Symbol: 2 (1/2,0,0) x,0,0
+ => SYMM(  7): -y,-x,-z                          Symbol: 2 x,-x,0
+ => SYMM(  8): y+1/2,x+1/2,-z                    Symbol: 2 (1/2,1/2,0) x,x,0
+ => SYMM(  9): -x,-y,-z                          Symbol: -1 0,0,0
+ => SYMM( 10): x+1/2,y+1/2,-z                    Symbol: n (1/2,1/2,0) x,y,0
+ => SYMM( 11): y+1/2,-x,-z                       Symbol: -4+ 1/4,-1/4,z; 1/4,-1/4,0
+ => SYMM( 12): x,-y+1/2,z                        Symbol: m x,1/4,z
+ => SYMM( 13): -y,x+1/2,-z                       Symbol: -4- -1/4,1/4,z; -1/4,1/4,0
+ => SYMM( 14): -x+1/2,y,z                        Symbol: m 1/4,y,z
+ => SYMM( 15): y,x,z                             Symbol: m x,x,z
+ => SYMM( 16): -y+1/2,-x+1/2,z                   Symbol: m x,-x+1/2,z
+
+ => Special Wyckoff Positions for P 4/n m m
+ 
+    Multp     Site        Representative Coordinates (centring translations excluded)
+      8       j              x,x,z               -x+1/2,-x+1/2,z     -x+1/2,x,z                              
+                             -x,x+1/2,-z         x,-x+1/2,z          x+1/2,-x,-z                             
+                             -x,-x,-z            x+1/2,x+1/2,-z                                              
+ 
+      8       i              1/4,y,z             1/4,-y+1/2,z        -y+1/2,1/4,z                            
+                             3/4,y+1/2,-z        y,1/4,z             3/4,-y,-z                               
+                             -y,3/4,-z           y+1/2,3/4,-z                                                
+ 
+      8       h              x,-x,1/2            -x+1/2,x+1/2,1/2    x+1/2,x,1/2                             
+                             -x,-x+1/2,1/2       -x,x,1/2            x+1/2,-x+1/2,1/2                        
+                             -x+1/2,-x,1/2       x,x+1/2,1/2                                                 
+ 
+      8       g              x,-x,0              -x+1/2,x+1/2,0      x+1/2,x,0                               
+                             -x,-x+1/2,0         -x,x,0              x+1/2,-x+1/2,0                          
+                             -x+1/2,-x,0         x,x+1/2,0                                                   
+ 
+      4       f              3/4,1/4,z           1/4,3/4,z           1/4,3/4,-z                              
+                             3/4,1/4,-z                                                                      
+ 
+      4       e              0,0,1/2             1/2,1/2,1/2         1/2,0,1/2                               
+                             0,1/2,1/2                                                                       
+ 
+      4       d              0,0,0               1/2,1/2,0           1/2,0,0                                 
+                             0,1/2,0                                                                         
+ 
+      2       c              1/4,1/4,z           3/4,3/4,-z                                                  
+ 
+      2       b              3/4,1/4,1/2         1/4,3/4,1/2                                                 
+ 
+      2       a              3/4,1/4,0           1/4,3/4,0                                                   
+ 
+
+ => Number of generators of space group:   4
+
+ GEN(1): -x+1/2,-y+1/2,z                                   
+ GEN(2): -y+1/2,x,z                                        
+ GEN(3): -x,y+1/2,-z                                       
+ GEN(4): -x,-y,-z                                          
+
+  TRANSLATIONAL COSET REPRESENTATIVES OF SPACE GROUP: 129                 
+
+  Num          Symmetry-Element                  Eqv. Positions 
+ -------------------------------------------------------------- 
+ (  1)   1                                       x,y,z
+ (  2)   2 1/4,1/4,z                             -x+1/2,-y+1/2,z
+ (  3)   4+ 1/4,1/4,z                            -y+1/2,x,z
+ (  4)   2 (0,1/2,0) 0,y,0                       y,-x+1/2,z
+ (  5)   4- 1/4,1/4,z                            -x,y+1/2,-z
+ (  6)   2 (1/2,0,0) x,0,0                       x-1/2,-y+1,-z
+ (  7)   2 x,-x,0                                y-1/2,x+1/2,-z
+ (  8)   2 (1/2,1/2,0) x,x,0                     -y,-x+1,-z
+ (  9)   -1 0,0,0                                -x,-y,-z
+ ( 10)   n (1/2,1/2,0) x,y,0                     x-1/2,y-1/2,-z
+ ( 11)   -4+ 1/4,-1/4,z; 1/4,-1/4,0              y-1/2,-x,-z
+ ( 12)   m x,1/4,z                               -y,x-1/2,-z
+ ( 13)   -4- -1/4,1/4,z; -1/4,1/4,0              x,-y-1/2,z
+ ( 14)   m 1/4,y,z                               -x+1/2,y-1,z
+ ( 15)   m x,x,z                                 -y+1/2,-x-1/2,z
+ ( 16)   m x,-x+1/2,z                            y,x-1,z
+ 
+  
+ => The lattice symbol is tP
+  
+  
+  The conventional k-vector is
+     0.00000     0.00000     0.00000
+  
+ THE GENERATORS OF THE LITTLE GROUP OF BRILLOUIN ZONE POINT GM
+
+ The little group can be generated from the following 4 elements:-
+
+  => GENk(1): -x+1/2,-y+1/2,z
+  => GENk(2): -x,y+1/2,-z
+  => GENk(3): y-1/2,x+1/2,-z
+  => GENk(4): -x,-y,-z
+
+ REPRESENTATIVE ELEMENTS OF THE LITTLE GROUP OF BRILLOUIN ZONE POINT GM
+
+  Operator of Gk Number( 1): x,y,z
+  Operator of Gk Number( 2): -x+1/2,-y+1/2,z
+  Operator of Gk Number( 3): -x,y+1/2,-z
+  Operator of Gk Number( 4): x-1/2,-y+1,-z
+  Operator of Gk Number( 5): y-1/2,x+1/2,-z
+  Operator of Gk Number( 6): -y,-x+1,-z
+  Operator of Gk Number( 7): y,-x+1/2,z
+  Operator of Gk Number( 8): -y+1/2,x,z
+  Operator of Gk Number( 9): -x,-y,-z
+  Operator of Gk Number(10): x-1/2,y-1/2,-z
+  Operator of Gk Number(11): x,-y-1/2,z
+  Operator of Gk Number(12): -x+1/2,y-1,z
+  Operator of Gk Number(13): -y+1/2,-x-1/2,z
+  Operator of Gk Number(14): y,x-1,z
+  Operator of Gk Number(15): -y,x-1/2,-z
+  Operator of Gk Number(16): y-1/2,-x,-z
+
+ ---------------------------------------------------------- 
+ => Number of elements of G_k:   16
+ => Number of irreducible representations of G_k:   10
+ => Dimensions of Ir(reps):   1  1  1  1  1  1  1  1  2  2
+
+
+    =============================================================================
+    Writing of Irreps matrices in symbolic form:  Module:Phase (fractions of 2pi)
+    Numeric values of symbols a,b,c,d, ... are given at the end of the table     
+    =============================================================================
+   
+   In this section the translations associated to Seitz symbols are simplified as
+      1/2  1/3  2/3  1/4  3/4  1/6  5/6  1/8  3/8  5/8  7/8
+        p    q    r    s    t    u    v    w    x    y    z
+   
+   The rotational part of Seitz symbols contains information about the orientation as 
+   defined in Kovalev. The international symbols may be truncated (for format reasons) in
+   the table below. The complete international symbols can be found in the previous list.
+   Symmetry elements are reduced to the standard form (positive translations < 1) 
+   The matrices of IRreps have been multiplied by the appropriate phase factor
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Ireps               Symmetry operators ->
+    v                1                         2 1/4,1/4,z               2 (0,1/2,0) 0,y,0         2 (1/2,0,0) x,1/2,0       2 (1/2,1/2,0) x,x,0       2 (-1/2,1/2,0) x,-x+1/2,0 4- 1/4,1/4,z              4+ 1/4,1/4,z              -1 0,0,0                  n (1/2,1/2,0) x,y,0       m x,1/4,z                 m 1/4,y,z                 m x,-x+1/2,z              m x,x,z                   -4- -1/4,1/4,z; -1/4,1/4,0-4+ 1/4,-1/4,z; 1/4,-1/4,0
+    v              {1|000}                   {2_00z|pp0}               {2_0y0|0p0}               {2_x00|p00}               {2_xx0|pp0}               {2_x-x0|000}              {4-_00z|0p0}              {4+_00z|p00}              {-1|000}                  {m_xy0|pp0}               {m_x0z|0p0}               {m_0yz|p00}               {m_x-xz|pp0}              {m_xxz|000}               {-4-_00z|0p0}             {-4+_00z|p00}  
+    v               Symm( 1)                  Symm( 2)                  Symm( 3)                  Symm( 4)                  Symm( 5)                  Symm( 6)                  Symm( 7)                  Symm( 8)                  Symm( 9)                  Symm(10)                  Symm(11)                  Symm(12)                  Symm(13)                  Symm(14)                  Symm(15)                  Symm(16)       
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+ IRrep( 1):           1                         1                         1                         1                         1                         1                         1                         1                         1                         1                         1                         1                         1                         1                         1                         1
+
+
+ IRrep( 2):           1                         1                         1                         1                         1                         1                         1                         1                        -1                        -1                        -1                        -1                        -1                        -1                        -1                        -1
+
+
+ IRrep( 3):           1                         1                         1                         1                        -1                        -1                        -1                        -1                         1                         1                         1                         1                        -1                        -1                        -1                        -1
+
+
+ IRrep( 4):           1                         1                         1                         1                        -1                        -1                        -1                        -1                        -1                        -1                        -1                        -1                         1                         1                         1                         1
+
+
+ IRrep( 5):           1                         1                        -1                        -1                         1                         1                        -1                        -1                         1                         1                        -1                        -1                         1                         1                        -1                        -1
+
+
+ IRrep( 6):           1                         1                        -1                        -1                         1                         1                        -1                        -1                        -1                        -1                         1                         1                        -1                        -1                         1                         1
+
+
+ IRrep( 7):           1                         1                        -1                        -1                        -1                        -1                         1                         1                         1                         1                        -1                        -1                        -1                        -1                         1                         1
+
+
+ IRrep( 8):           1                         1                        -1                        -1                        -1                        -1                         1                         1                        -1                        -1                         1                         1                         1                         1                        -1                        -1
+
+
+ IRrep( 9):     1           0            -1           0             1           0            -1           0             0           1             0          -1             0          -1             0           1            -1           0             1           0            -1           0             1           0             0          -1             0           1             0           1             0          -1
+                0           1             0          -1             0          -1             0           1             1           0            -1           0             1           0            -1           0             0          -1             0           1             0           1             0          -1            -1           0             1           0            -1           0             1           0
+
+
+ IRrep(10):     1           0            -1           0             1           0            -1           0             0           1             0          -1             0          -1             0           1             1           0            -1           0             1           0            -1           0             0           1             0          -1             0          -1             0           1
+                0           1             0          -1             0          -1             0           1             1           0            -1           0             1           0            -1           0             0           1             0          -1             0          -1             0           1             1           0            -1           0             1           0            -1           0
+ 
+ 
+ --------------------------------------------------------------
+ List of constants and phase factors defined in the above table
+ --------------------------------------------------------------
+ 
+ The propagation vector is k=( 0.00000, 0.00000, 0.00000)
+
+
+ => Alternative evaluation of the propagation vector group. 
+    The ordering of the symmetry operators may be different 
+    than the sequence numbering given above                 
+    --------------------------------------------------------
+
+      PROPAGATION VECTOR GROUP INFORMATION
+      ====================================
+
+ => The input propagation vector is: K=(  0.0000  0.0000  0.0000 )
+ =>  K .. IS .. equivalent to -K, the extended little group is G(k) 
+ => The operators following the k-vectors constitute the co-set decomposition G[Gk]
+    The list of equivalent k-vectors are also given on the right of operators.     
+ => Numerals of the extended little group operators:  {  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 16 }
+ => The star of K is formed by the following   1 vectors:
+
+
+  Eqv. -K: k_1  = (  0.0000  0.0000  0.0000 )    Op: (  1) x,y,z
+                                                 Op: (  2) -x+1/2,-y+1/2,z  -> (   0.0000  0.0000  0.0000 )
+                                                 Op: (  3) -y+1/2,x,z       -> (   0.0000  0.0000  0.0000 )
+                                                 Op: (  4) -x,y+1/2,-z      -> (   0.0000  0.0000  0.0000 )
+                                                 Op: (  5) y,-x+1/2,z       -> (   0.0000  0.0000  0.0000 )
+                                                 Op: (  6) x+1/2,-y,-z      -> (   0.0000  0.0000  0.0000 )
+                                                 Op: (  7) -y,-x,-z         -> (   0.0000  0.0000  0.0000 )
+                                                 Op: (  8) y+1/2,x+1/2,-z   -> (   0.0000  0.0000  0.0000 )
+                                                 Op: (  9) -x,-y,-z         -> (   0.0000  0.0000  0.0000 )
+                                                 Op: ( 10) x+1/2,y+1/2,-z   -> (   0.0000  0.0000  0.0000 )
+                                                 Op: ( 11) y+1/2,-x,-z      -> (   0.0000  0.0000  0.0000 )
+                                                 Op: ( 12) x,-y+1/2,z       -> (   0.0000  0.0000  0.0000 )
+                                                 Op: ( 13) -y,x+1/2,-z      -> (   0.0000  0.0000  0.0000 )
+                                                 Op: ( 14) -x+1/2,y,z       -> (   0.0000  0.0000  0.0000 )
+                                                 Op: ( 15) y,x,z            -> (   0.0000  0.0000  0.0000 )
+                                                 Op: ( 16) -y+1/2,-x+1/2,z  -> (   0.0000  0.0000  0.0000 )
+
+ => G_k has the following symmetry operators: 
+
+      1 SYMM(  1) = x,y,z
+      2 SYMM(  2) = -x+1/2,-y+1/2,z
+      3 SYMM(  3) = -y+1/2,x,z
+      4 SYMM(  4) = -x,y+1/2,-z
+      5 SYMM(  5) = y,-x+1/2,z
+      6 SYMM(  6) = x+1/2,-y,-z
+      7 SYMM(  7) = -y,-x,-z
+      8 SYMM(  8) = y+1/2,x+1/2,-z
+      9 SYMM(  9) = -x,-y,-z
+     10 SYMM( 10) = x+1/2,y+1/2,-z
+     11 SYMM( 11) = y+1/2,-x,-z
+     12 SYMM( 12) = x,-y+1/2,z
+     13 SYMM( 13) = -y,x+1/2,-z
+     14 SYMM( 14) = -x+1/2,y,z
+     15 SYMM( 15) = y,x,z
+     16 SYMM( 16) = -y+1/2,-x+1/2,z
+
+
+      DATA ABOUT ATOMS 
+      ================ 
+
+
+ => No. of sites:    3
+
+ => Calculation for polar vectors
+
+ => List of atoms within a primitive unit cell: 
+                 X       Y       Z           for site:  1
+ -> Mn_1    :   0.7500  0.7500  0.3363  : (x,y,z)                                                     
+ -> Mn_2    :   0.2500  0.2500  0.6637  : (-x,y+1/2,-z) + (1,-1,1)                                    
+                 X       Y       Z           for site:  2
+ -> Cu_1    :   0.2500  0.7500  0.0000  : (x,y,z)                                                     
+ -> Cu_2    :   0.7500  0.2500  0.0000  : (-x,y+1/2,-z) + (1,-1,0)                                    
+                 X       Y       Z           for site:  3
+ -> As_1    :   0.7500  0.7500  0.7360  : (x,y,z)                                                     
+ -> As_2    :   0.2500  0.2500  0.2640  : (-x,y+1/2,-z) + (1,-1,1)                                    
+
+
+     ========================== 
+     CALCULATIONS FOR SITE : 1
+     ========================== 
+
+
+ => Decomposition of the Magnetic/Mechanic representation:
+
+
+ -> GAMMA(Mechanic):   1 Irep_k( 1) + 1 Irep_k( 8) + 1 Irep_k( 9) + 1 Irep_k(10)
+  
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+
+ => Atomic components of the BASIS FUNCTIONS using PROJECTION OPERATORS: 
+                    Calculation for SITE number:  1
+                (Only non-null functions are written) 
+
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  1) of dimension   1 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      Mn_1              Mn_2            
+ BsV( 1, 1: 2):Re (    0    0    1) (    0    0   -1) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Mn_1      0.7500  0.7500  0.3363
+       Sk(1): (0,0,u)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: Mn_2      0.2500  0.2500  0.6637
+       Sk(2): (0,0,-u)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  8) of dimension   1 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      Mn_1              Mn_2            
+ BsV( 1, 1: 2):Re (    0    0    1) (    0    0    1) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Mn_1      0.7500  0.7500  0.3363
+       Sk(1): (0,0,u)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: Mn_2      0.2500  0.2500  0.6637
+       Sk(2): (0,0,u)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  9) of dimension   2 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      Mn_1              Mn_2            
+ BsV( 1, 1: 2):Re (    0    1    0) (    0    1    0) 
+ BsV( 2, 1: 2):Re (    1    0    0) (    1    0    0) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Mn_1      0.7500  0.7500  0.3363
+       Sk(1): (v,u,0)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: Mn_2      0.2500  0.2500  0.6637
+       Sk(2): (v,u,0)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep( 10) of dimension   2 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      Mn_1              Mn_2            
+ BsV( 1, 1: 2):Re (    1    0    0) (   -1    0    0) 
+ BsV( 2, 1: 2):Re (    0   -1    0) (    0    1    0) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Mn_1      0.7500  0.7500  0.3363
+       Sk(1): (u,-v,0)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: Mn_2      0.2500  0.2500  0.6637
+       Sk(2): (-u,v,0)
+--------------------------------------------------------------------------------
+
+
+     ========================== 
+     CALCULATIONS FOR SITE : 2
+     ========================== 
+
+
+ => Decomposition of the Magnetic/Mechanic representation:
+
+
+ -> GAMMA(Mechanic):   1 Irep_k( 3) + 1 Irep_k( 8) + 1 Irep_k( 9) + 1 Irep_k(10)
+  
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+
+ => Atomic components of the BASIS FUNCTIONS using PROJECTION OPERATORS: 
+                    Calculation for SITE number:  2
+                (Only non-null functions are written) 
+
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  3) of dimension   1 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z   
+              Atoms:      Cu_1              Cu_2            
+ BsV( 1, 1: 2):Re (    0    0    1) (    0    0   -1) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Cu_1      0.2500  0.7500  0.0000
+       Sk(1): (0,0,u)
+
+       SYMM -x+1,y-1/2,-z                                                  Atom: Cu_2      0.7500  0.2500  0.0000
+       Sk(2): (0,0,-u)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  8) of dimension   1 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z   
+              Atoms:      Cu_1              Cu_2            
+ BsV( 1, 1: 2):Re (    0    0    1) (    0    0    1) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Cu_1      0.2500  0.7500  0.0000
+       Sk(1): (0,0,u)
+
+       SYMM -x+1,y-1/2,-z                                                  Atom: Cu_2      0.7500  0.2500  0.0000
+       Sk(2): (0,0,u)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  9) of dimension   2 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z   
+              Atoms:      Cu_1              Cu_2            
+ BsV( 1, 1: 2):Re (    0    1    0) (    0    1    0) 
+ BsV( 2, 1: 2):Re (    1    0    0) (    1    0    0) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Cu_1      0.2500  0.7500  0.0000
+       Sk(1): (v,u,0)
+
+       SYMM -x+1,y-1/2,-z                                                  Atom: Cu_2      0.7500  0.2500  0.0000
+       Sk(2): (v,u,0)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep( 10) of dimension   2 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z   
+              Atoms:      Cu_1              Cu_2            
+ BsV( 1, 1: 2):Re (    1    0    0) (   -1    0    0) 
+ BsV( 2, 1: 2):Re (    0    1    0) (    0   -1    0) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: Cu_1      0.2500  0.7500  0.0000
+       Sk(1): (u,v,0)
+
+       SYMM -x+1,y-1/2,-z                                                  Atom: Cu_2      0.7500  0.2500  0.0000
+       Sk(2): (-u,-v,0)
+--------------------------------------------------------------------------------
+
+
+     ========================== 
+     CALCULATIONS FOR SITE : 3
+     ========================== 
+
+
+ => Decomposition of the Magnetic/Mechanic representation:
+
+
+ -> GAMMA(Mechanic):   1 Irep_k( 1) + 1 Irep_k( 8) + 1 Irep_k( 9) + 1 Irep_k(10)
+  
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+
+ => Atomic components of the BASIS FUNCTIONS using PROJECTION OPERATORS: 
+                    Calculation for SITE number:  3
+                (Only non-null functions are written) 
+
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  1) of dimension   1 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      As_1              As_2            
+ BsV( 1, 1: 2):Re (    0    0    1) (    0    0   -1) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: As_1      0.7500  0.7500  0.7360
+       Sk(1): (0,0,u)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: As_2      0.2500  0.2500  0.2640
+       Sk(2): (0,0,-u)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  8) of dimension   1 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      As_1              As_2            
+ BsV( 1, 1: 2):Re (    0    0    1) (    0    0    1) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: As_1      0.7500  0.7500  0.7360
+       Sk(1): (0,0,u)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: As_2      0.2500  0.2500  0.2640
+       Sk(2): (0,0,u)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep(  9) of dimension   2 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      As_1              As_2            
+ BsV( 1, 1: 2):Re (    0    1    0) (    0    1    0) 
+ BsV( 2, 1: 2):Re (    1    0    0) (    1    0    0) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: As_1      0.7500  0.7500  0.7360
+       Sk(1): (v,u,0)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: As_2      0.2500  0.2500  0.2640
+       Sk(2): (v,u,0)
+
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+ => Basis functions of Representation IRrep( 10) of dimension   2 contained  1 times in GAMMA
+   +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
++
+              SYMM  x,y,z   -x+1,y-1/2,-z+1   
+              Atoms:      As_1              As_2            
+ BsV( 1, 1: 2):Re (    1    0    0) (   -1    0    0) 
+ BsV( 2, 1: 2):Re (    0   -1    0) (    0    1    0) 
+ 
+
+ ----- The Fourier coefficients are LINEAR COMBINATIONS of Basis Functions: coefficients u,v,w,p,q ....(may be complex!)
+       
+       The general expressions of the Fourier coefficients Sk(j) of the atoms non-related 
+       by lattice translations are the following:
+
+       SYMM x,y,z                                                          Atom: As_1      0.7500  0.7500  0.7360
+       Sk(1): (u,-v,0)
+
+       SYMM -x+1,y-1/2,-z+1                                                Atom: As_2      0.2500  0.2500  0.2640
+       Sk(2): (-u,v,0)
+--------------------------------------------------------------------------------

@@ -53,11 +53,11 @@ def build_reference_crystal(it_number: int):
     """
     Build a minimal reference crystal for space group *it_number*.
 
-    Applies all conventional-cell operations to a general position to generate
-    an orbit. The resulting crystal is guaranteed to have exactly the target
-    space group (general Wyckoff position has full multiplicity, avoiding
-    accidental supergroup detection). Uses the preferred Hall number (origin
-    choice 2 when available).
+    Uses TWO general-position orbits with distinct element types (Z=1 and Z=2).
+    A single orbit with identical atoms can accidentally have higher symmetry
+    than the target SG (e.g. the Pna2_1 orbit has Pnma symmetry when atoms
+    are identical), causing spgrep to compute irreps for the wrong group.
+    Two distinct orbits break any such accidental centrosymmetry.
 
     Returns (lattice, positions, numbers) suitable for spgrep.get_spacegroup_irreps.
     """
@@ -66,17 +66,21 @@ def build_reference_crystal(it_number: int):
     rots = dataset['rotations']
     trans = dataset['translations']
 
-    # General position — avoid special Wyckoff sites
-    r0 = np.array([0.12345, 0.56789, 0.34567])
-    seen = []
-    for R, t in zip(rots, trans):
-        r = (R.astype(float) @ r0 + t) % 1.0
-        if not any(np.allclose(r, s, atol=1e-5) for s in seen):
-            seen.append(r)
+    def _orbit(r0):
+        seen = []
+        for R, t in zip(rots, trans):
+            r = (R.astype(float) @ r0 + t) % 1.0
+            if not any(np.allclose(r, s, atol=1e-5) for s in seen):
+                seen.append(r)
+        return seen
 
-    lattice = _lattice_for_crystal_system(it_number)
-    positions = np.array(seen)
-    numbers = np.ones(len(positions), dtype=int)
+    # Two general positions chosen to avoid special Wyckoff sites
+    orbit_A = _orbit(np.array([0.12345, 0.56789, 0.34567]))
+    orbit_B = _orbit(np.array([0.71828, 0.31415, 0.27183]))
+
+    lattice   = _lattice_for_crystal_system(it_number)
+    positions = np.array(orbit_A + orbit_B)
+    numbers   = np.array([1] * len(orbit_A) + [2] * len(orbit_B))
     return lattice, positions, numbers
 
 

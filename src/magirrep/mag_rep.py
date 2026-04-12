@@ -32,24 +32,27 @@ def map_atoms_to_parent_cell(positions, magmoms, child_transform_M, child_transf
     # We apply this first for the child transform, then for the parent transform.
 
     for r, m in zip(positions, magmoms):
-        # 1. From child supercell to parent cell
-        r_p = child_transform_M @ r + child_transform_t
+        # 1. From child supercell to parent cell.
+        # The MAGNDATA child_transform_Pp_abc string 'c,a,b-c;1/4,0,0' describes
+        # child basis vectors in terms of parent basis (rows of P).  In fractional
+        # coordinates the atom transform is r_parent = P^T @ r_child + p, where
+        # P = child_transform_M as returned by parse_transform.
+        r_p = child_transform_M.T @ r + child_transform_t
 
         # 2. From parent cell to standard parent setting (raw, before wrapping)
-        r_std_raw = parent_transform_M @ r_p + parent_transform_t
+        r_std_raw = parent_transform_M.T @ r_p + parent_transform_t
 
         # Wrapping to [0, 1); track integer offset for canonical-representative selection
         r_std = r_std_raw % 1.0
         L_wrap = np.round(r_std_raw - r_std).astype(int)
 
-        # The magnetic moment vector transforms as an axial vector.
-        # Only the sign of det(P) matters (handedness correction); using the full det
-        # magnifies moments by scale^3 for pure supercell scalings (e.g. det(2I)=8).
+        # Moment vectors (crystal-axis fractional) transform the same way as positions
+        # (pure basis change, no det factor).  sign(det) = +1 for all valid transforms.
         P1 = child_transform_M
-        m_p = np.sign(np.linalg.det(P1)) * P1 @ m
+        m_p = np.sign(np.linalg.det(P1)) * P1.T @ m
 
         P2 = parent_transform_M
-        m_std = np.sign(np.linalg.det(P2)) * P2 @ m_p
+        m_std = np.sign(np.linalg.det(P2)) * P2.T @ m_p
 
         parent_positions.append(r_std)
         parent_magmoms.append(m_std)
@@ -170,6 +173,110 @@ def compute_permutation_rep(rotations, translations, kpoint,
         chi_perm[i_lg] = chi_p
 
     return atom_mappings, chi_perm, chi_axial
+
+
+def compute_displacive_characters(R_lk, t_lk, kpoint, positions, tol=1e-4):
+    """
+    Computes the character of the mechanical (displacement) representation for each
+    operation in the little group.
+
+    χ_disp(g) = Tr(R) · Σ_{fixed atoms} exp(−2πi k·L)
+
+    No det(R) factor — displacements are polar vectors, not axial.
+
+    Parameters
+    ----------
+    R_lk : array of 3x3 integer matrices
+    t_lk : array of 3x1 float vectors
+    kpoint : 3-vector
+    positions : Nx3 array of atom fractional positions
+
+    Returns
+    -------
+    chi_disp : np.ndarray, shape (|G_k|,), complex
+    """
+    chi_disp = np.zeros(len(R_lk), dtype=complex)
+
+    for i, (R, t) in enumerate(zip(R_lk, t_lk)):
+        chi_axial = np.trace(R)   # polar vector: no det(R) factor
+
+        trace_perm = 0.0 + 0.0j
+        for r in positions:
+            r_transformed = R @ r + t
+            diff = r_transformed - r
+            if np.allclose(diff - np.round(diff), 0, atol=tol):
+                L = np.round(diff)
+                atom_phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
+                trace_perm += atom_phase
+
+        chi_disp[i] = chi_axial * trace_perm
+
+    return chi_disp
+
+
+def build_displacive_rep_matrices(rotations, translations, kpoint, parent_positions,
+                               mapping_little_group, tol=1e-4):
+    """
+    Build the full 3N×3N D(g) matrices of the mechanical (displacement) representation
+    for each little-group operation.
+
+    For operation g = {R | t}, atom src maps to atom dst with lattice shift L:
+        R @ r_src + t ≈ r_dst + L
+    Block (dst, src):
+        D(g)[3*dst:3*dst+3, 3*src:3*src+3] = R * exp(-2πi k·L)
+
+    No det(R) factor — displacements are polar vectors.
+
+    Parameters
+    ----------
+    rotations : np.ndarray, shape (N_ops, 3, 3)
+    translations : np.ndarray, shape (N_ops, 3)
+    kpoint : array-like, shape (3,)
+    parent_positions : np.ndarray, shape (N_prim, 3)
+    mapping_little_group : array-like
+
+    Returns
+    -------
+    D_matrices : list[np.ndarray]
+        One 3N×3N complex matrix per little-group operation.
+    """
+    N = len(parent_positions)
+    kpoint = np.asarray(kpoint, dtype=float)
+    D_matrices = []
+
+    for idx in mapping_little_group:
+        R = rotations[idx].astype(float)
+        t = translations[idx]
+        D = np.zeros((3 * N, 3 * N), dtype=complex)
+
+        for src, r_src in enumerate(parent_positions):
+            r_transformed = R @ r_src + t
+            for dst, r_dst in enumerate(parent_positions):
+                diff = r_transformed - r_dst
+                if np.allclose(diff - np.round(diff), 0, atol=tol):
+                    L = np.round(diff)
+                    phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
+                    D[3*dst:3*dst+3, 3*src:3*src+3] = R * phase   # no det_R
+                    break
+
+        D_matrices.append(D)
+
+    return D_matrices
+
+
+def compute_perm_characters_all(rotations, translations, kpoint, positions, tol=1e-4):
+    """Return chi_perm indexed over ALL space-group ops (needed for decompose()).
+
+    chi_perm[i] = Σ_{fixed atoms} exp(−2πi k·L_j)  for op i.
+    """
+    chi = np.zeros(len(rotations), dtype=complex)
+    kpt = np.asarray(kpoint, dtype=float)
+    for i, (R, t) in enumerate(zip(rotations, translations)):
+        for r in positions:
+            diff = R @ r + t - r
+            if np.allclose(diff - np.round(diff), 0, atol=tol):
+                chi[i] += np.exp(-2j * np.pi * np.dot(kpt, np.round(diff)))
+    return chi
 
 
 def compute_characters(R_lk, t_lk, kpoint, mag_positions, tol=1e-4):

@@ -47,9 +47,10 @@ def parse_mcif_fields(path: str) -> dict:
     # expected irrep for validation
     irrep_id_loop = block.find('_irrep_', ['id', 'dimension', 'small_dimension'])
     if irrep_id_loop and len(irrep_id_loop) > 0:
-        fields['expected_irrep_id'] = irrep_id_loop[0][0]
-        fields['expected_irrep_dim'] = int(irrep_id_loop[0][1]) if len(irrep_id_loop[0]) > 1 and irrep_id_loop[0][1] != '.' else None
-        fields['expected_irrep_small_dim'] = int(irrep_id_loop[0][2]) if len(irrep_id_loop[0]) > 2 and irrep_id_loop[0][2] != '.' else None
+        _missing = {'.', '?'}
+        fields['expected_irrep_id'] = irrep_id_loop[0][0] if irrep_id_loop[0][0] not in _missing else None
+        fields['expected_irrep_dim'] = int(irrep_id_loop[0][1]) if len(irrep_id_loop[0]) > 1 and irrep_id_loop[0][1] not in _missing else None
+        fields['expected_irrep_small_dim'] = int(irrep_id_loop[0][2]) if len(irrep_id_loop[0]) > 2 and irrep_id_loop[0][2] not in _missing else None
 
     return fields
 
@@ -116,6 +117,56 @@ def parse_transform(transform_str: str):
     
     symm_op = SymmOp.from_xyz_str(','.join(exprs))
     return symm_op.rotation_matrix, symm_op.translation_vector
+
+def parse_moments_from_mcif(path: str) -> dict:
+    """
+    Read _atom_site_moment.crystalaxis_x/y/z directly from the mCIF via gemmi.
+
+    Returns {site_label: np.ndarray([mx, my, mz])} in crystal-axis units of the
+    child cell.  Only sites with numeric (non-'?') components are included.
+    """
+    with open(path, 'rb') as f:
+        content = f.read().decode('ascii', errors='ignore')
+    doc = gemmi.cif.read_string(content)
+    block = doc[-1]
+
+    moments = {}
+    tab = block.find('_atom_site_moment.',
+                     ['label', 'crystalaxis_x', 'crystalaxis_y', 'crystalaxis_z'])
+    for row in tab:
+        label = row.str(0)
+        try:
+            mx = float(row[1])
+            my = float(row[2])
+            mz = float(row[3])
+            moments[label] = np.array([mx, my, mz])
+        except (ValueError, TypeError):
+            pass  # skip entries with '?' or non-numeric values
+    return moments
+
+
+def parse_explicit_atom_positions(path: str) -> dict:
+    """
+    Read fractional coordinates from _atom_site loop for explicitly listed atoms.
+
+    Returns {site_label: np.ndarray([x, y, z])}.
+    """
+    with open(path, 'rb') as f:
+        content = f.read().decode('ascii', errors='ignore')
+    doc = gemmi.cif.read_string(content)
+    block = doc[-1]
+
+    positions = {}
+    tab = block.find('_atom_site_', ['label', 'fract_x', 'fract_y', 'fract_z'])
+    for row in tab:
+        label = row.str(0)
+        try:
+            x, y, z = float(row[1]), float(row[2]), float(row[3])
+            positions[label] = np.array([x, y, z])
+        except (ValueError, TypeError):
+            pass
+    return positions
+
 
 def get_magnetic_structure(path: str) -> Structure:
     """
