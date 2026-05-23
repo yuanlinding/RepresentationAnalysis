@@ -11,10 +11,10 @@ that transforms as an **irreducible representation** (irrep) of G. Finding that 
 the observed magnetic structure is what `magirrep` does.
 
 The result:
+
 - classifies the phase transition and its symmetry-breaking pattern
 - links to the magnetic space group found by `findmagsym`
 - constrains symmetry-allowed physical effects (magnetoelectric coupling, phonon softening, …)
-
 
 ## 2. Space Groups and Their Operations
 
@@ -40,7 +40,6 @@ In code: `spglib.get_symmetry_from_database(hall_number)` returns the arrays `ro
 and `translations[i]` for the conventional cell. SG #129 (P4/nmm) has 16; SG #225 (Fm-3m)
 has 192.
 
-
 ## 3. Bloch Functions and the Propagation Vector
 
 Magnetic ordering is periodic with period set by the **propagation vector k** (fractional
@@ -56,9 +55,9 @@ Bloch basis functions are:
 A pure lattice translation `{E | n}` multiplies such a function by `e^{ik·n}`.
 
 Special cases:
+
 - **k = (0,0,0)** (Γ): magnetic cell equals the nuclear cell. Example: CuMnAs.
 - **k = (½,½,½)** (L): magnetic cell doubles in each direction. Example: NiO (2×2×2 supercell).
-
 
 ## 4. The Little Group G_k
 
@@ -80,6 +79,7 @@ Only elements of G_k can mix Bloch functions at **k** with each other; remaining
 send them to a different **star arm** of **k**.
 
 In code (`little_group.py: find_little_group`):
+
 ```python
 k_prime = R.T @ kpoint
 diff = k_prime - kpoint
@@ -88,7 +88,6 @@ if np.allclose(diff - np.round(diff), 0, atol=tol):   # diff ∈ Z³ → element
 
 The little group at Γ is always the full point group. At a general **k** it is a proper
 subgroup.
-
 
 ## 5. Irreducible Representations of G_k
 
@@ -109,6 +108,7 @@ conjugacy class. The **Great Orthogonality Theorem** for characters:
 This identity is the mathematical engine behind Bertaut's decomposition.
 
 In code: `spgrep.get_spacegroup_irreps(lattice, positions, numbers, kpoint)` returns:
+
 - `irreps[α][i]` — matrix for the i-th little-group operation
 - `rotations`, `translations` — all N conventional-cell operations
 - `mapping_little_group[i]` — index into `rotations`/`translations` of the i-th little-group op
@@ -116,7 +116,6 @@ In code: `spgrep.get_spacegroup_irreps(lattice, positions, numbers, kpoint)` ret
 spgrep works with the **primitive** cell. The reference crystal in `build_reference_crystal`
 places atoms at a general Wyckoff position (full-multiplicity orbit) to guarantee exactly the
 target space group is detected, not an accidental supergroup.
-
 
 ## 6. The Magnetic Representation
 
@@ -156,18 +155,19 @@ vector representation.
 
 **Factor 1** — `det(R)·Tr(R)`: character of the axial-vector representation of R.
 
-| Operation | det(R) | Tr(R) | product |
-|-----------|--------|-------|---------|
-| Identity E | +1 | +3 | +3 |
-| Inversion I | −1 | −3 | +3 |
-| C₂ (proper 2-fold) | +1 | −1 | −1 |
-| σ (mirror) | −1 | +1 | −1 |
+| Operation           | det(R) | Tr(R) | product |
+| ------------------- | ------ | ----- | ------- |
+| Identity E          | +1     | +3    | +3      |
+| Inversion I         | −1    | −3   | +3      |
+| C₂ (proper 2-fold) | +1     | −1   | −1     |
+| σ (mirror)         | −1    | +1    | −1     |
 
 **Factor 2** — phase sum over fixed atoms. At k = Γ all phases are 1, so this factor equals
 the number of fixed atoms. At a general **k** each fixed atom contributes a complex phase
 that depends on whether the atom shifted by a pure lattice translation and, if so, which one.
 
 In code (`mag_rep.py: compute_characters`):
+
 ```python
 chi_axial = np.linalg.det(R) * np.trace(R)
 # for each fixed atom ν:
@@ -176,7 +176,6 @@ atom_phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
 trace_perm += atom_phase
 chi_mag[i] = chi_axial * trace_perm
 ```
-
 
 ## 7. The Displacive/Mechanical Representation
 
@@ -192,6 +191,7 @@ Atomic displacements are **polar vectors** (not axial), so the `det(R)` sign fac
 ```
 
 In code (`mag_rep.py: compute_displacive_characters`):
+
 ```python
 chi_disp[i] = np.trace(R) * trace_perm   # no det(R)
 ```
@@ -200,11 +200,11 @@ chi_disp[i] = np.trace(R) * trace_perm   # no det(R)
 
 All representations can be expressed through three primitive building blocks:
 
-| Name | χ(g) | Role |
-|------|-------|------|
-| Γ_perm | Σ_{fixed atoms} exp(−2πi k·L) | permutation of atoms |
-| Γ_polar | Tr(R) | single polar-vector DOF |
-| Γ_axial | det(R)·Tr(R) | single axial-vector DOF |
+| Name     | χ(g)                             | Role                    |
+| -------- | --------------------------------- | ----------------------- |
+| Γ_perm  | Σ_{fixed atoms} exp(−2πi k·L) | permutation of atoms    |
+| Γ_polar | Tr(R)                             | single polar-vector DOF |
+| Γ_axial | det(R)·Tr(R)                     | single axial-vector DOF |
 
 The full reps are then outer products:
 
@@ -232,7 +232,6 @@ branches and is printed in section (8) after the Γ_mech total line.
 where N_all_prim is the number of atoms in the primitive cell. This is printed as a
 validation at the end of the report.
 
-
 ## 8. Bertaut's Decomposition Formula
 
 Any representation Γ decomposes into irreps of G_k:
@@ -253,6 +252,7 @@ For a continuous (Landau) transition exactly **one** irrep is active (`n_α = 1`
 magnetic structure lives entirely in the basis functions of that one irrep).
 
 In code (`irrep_decompose.py: decompose`):
+
 ```python
 chi_lg = chi_rep[mapping_little_group]          # restrict to G_k operations
 for irrep in irreps:
@@ -265,7 +265,6 @@ operations but the sum runs only over the `|G_k|` little-group operations.
 
 The same `decompose()` function handles Γ_mag, Γ_mech, Γ_perm, Γ_axial, and Γ_polar —
 only the input character array differs.
-
 
 ## 9. Coordinate Conventions and the mCIF File
 
@@ -287,6 +286,7 @@ r_std  =  P_parent · r_parent  +  p_parent
 ```
 
 Full chain from child to standard:
+
 ```
 r_std  =  P_parent · (P_child · r_child + p_child) + p_parent
 ```
@@ -313,17 +313,18 @@ while still reversing sign under improper transforms (det = −1). For rotations
 ### Origin choice
 
 Many centrosymmetric space groups have two standard settings:
+
 - **OC1**: origin at a high-site-symmetry point
 - **OC2**: origin at the inversion centre (Bilbao standard)
 
 Using OC1 operations with OC2 atom positions causes a coordinate system mismatch that
 produces non-integer `n_α`. The code always selects OC2 Hall numbers
 (`little_group.py: get_hall_number`):
+
 ```python
 oc2 = [h for h, c in candidates if c == '2']
 _HALL_NUMBER_CACHE[it_no] = oc2[0] if oc2 else candidates[0][0]
 ```
-
 
 ## 10. Primitive vs. Conventional Cell
 
@@ -339,21 +340,21 @@ the primitive cell has 1. `_select_primitive_atoms` in `pipeline.py` reduces the
 to one representative per primitive cell by converting to primitive fractional coordinates
 and keeping distinct sites.
 
-
 ## 11. Self-Consistency Checks
 
-| Check | Meaning |
-|---|---|
-| All `n_α ∈ Z≥0` | Magnetic structure is physically consistent |
-| `Σ_α n_α · d_α = 3 N_mag_prim` | Total spin degrees of freedom conserved |
-| `Σ_α n_α · d_α = 3 N_all_prim` | Total phonon degrees of freedom conserved |
-| Exactly one `n_α ≠ 0` | Continuous (Landau) transition driven by a single irrep |
-| Active irrep label matches mCIF `_irrep_id` | Correct identification vs. Bilbao database |
-| `‖M − M_rec‖/‖M‖ ≈ 0` | Actual moments lie entirely in the active irrep subspace |
+| Check                                         | Meaning                                                  |
+| --------------------------------------------- | -------------------------------------------------------- |
+| All `n_α ∈ Z≥0`                          | Magnetic structure is physically consistent              |
+| `Σ_α n_α · d_α = 3 N_mag_prim`         | Total spin degrees of freedom conserved                  |
+| `Σ_α n_α · d_α = 3 N_all_prim`         | Total phonon degrees of freedom conserved                |
+| Exactly one `n_α ≠ 0`                     | Continuous (Landau) transition driven by a single irrep  |
+| Active irrep label matches mCIF `_irrep_id` | Correct identification vs. Bilbao database               |
+| `‖M − M_rec‖/‖M‖ ≈ 0`                 | Actual moments lie entirely in the active irrep subspace |
 
 Validation cases:
 
 **CuMnAs** (SG #129, k = Γ, 2 Mn per primitive cell → 6 spin DOF):
+
 ```
 Γ_mag  = 1·mGM1- ⊕ 1·mGM2+ ⊕ 1·mGM5+ ⊕ 1·mGM5-   (1+1+2+2 = 6) ✓
 Active irrep: mGM5-  (dim=2, η=1.000) ✓
@@ -362,6 +363,7 @@ Active irrep: mGM5-  (dim=2, η=1.000) ✓
 ```
 
 **NiO** (SG #225, k = L = (½,½,½), 1 Ni per primitive cell → 3 spin DOF):
+
 ```
 Γ_mag  = 1·mL1+ ⊕ 1·mL3+   (1+2 = 3) ✓
 Active irrep: mL3+  (dim=2, deg=4, η=1.000) ✓
@@ -369,10 +371,10 @@ Active irrep: mL3+  (dim=2, deg=4, η=1.000) ✓
 Γ_mech = 3·mL1+ ⊕ 1·mL1- ⊕ 1·mL2+ ⊕ 3·mL2- ⊕ 4·mL3+ ⊕ 4·mL3-   (Σ n·d = 24 = 3×8) ✓
 ```
 
-
 ## 12. Irrep Labelling
 
 The Bilbao labels such as "mGM5−" and "mL3+" encode:
+
 - **Point label**: GM (Γ), L, X, M, … — the high-symmetry k-point
 - **Number**: sequential index at that k-point
 - **Parity suffix ±**: character under inversion (if present in G_k). "+" irreps are even, "−" are odd.
@@ -397,51 +399,3 @@ spgrep's 0-based irrep indices are not the same as Bilbao's 1-based sequential n
 (ascending) and assigns consecutive integers 1, 2, 3, …. This matches the Bilbao ordering
 for the common little groups tested (D₄h, D₃d, D₂h). The optional `bilbao_match.py` module
 can cross-check by querying the Bilbao REPRES web API (currently blocked by Cloudflare CAPTCHA).
-
-
-## 13. Pipeline Summary
-
-```
-mCIF / CIF
-  │
-  ▼  parse_mcif.py
-  ├─ IT number, k-vector, child & parent transforms
-  └─ full structure (positions + moments in child/magnetic cell)
-  │
-  ▼  mag_rep.map_atoms_to_parent_cell()
-  ├─ r_std = P_parent·(P_child·r_child + p_child) + p_parent
-  ├─ m_std = sign(det(P_parent))·P_parent · sign(det(P_child))·P_child · m_child
-  ├─ deduplicate parent-cell positions  (_deduplicate_positions, prefer canonical rep)
-  └─ reduce to one primitive cell        (_select_primitive_atoms)
-  │
-  ▼  irrep_decompose.get_little_group_irreps(IT, k)
-  ├─ build_reference_crystal(IT) → generic (lattice, positions, numbers)
-  └─ spgrep.get_spacegroup_irreps → irreps, rotations, translations, mapping_little_group
-  │
-  ├──── MAGNETIC PATH ─────────────────────────────────────────────────────────
-  │  ▼  mag_rep.compute_characters(rotations, translations, k, mag_positions)
-  │       χ_mag[i] = det(R_i)·Tr(R_i) × Σ_{ν: fixed} exp(−2πi k·L_ν)
-  │  ▼  irrep_decompose.decompose(irreps, χ_mag, mapping_little_group)  → n_μ(mag)
-  │  ▼  irrep_decompose.identify_active_irrep(...)  → (idx, n, η, M_proj)
-  │
-  ├──── PHONON PATH ───────────────────────────────────────────────────────────
-  │  ▼  mag_rep.compute_displacive_characters(rotations, translations, k, all_positions)
-  │       χ_disp[i] = Tr(R_i) × Σ_{ν: fixed} exp(−2πi k·L_ν)
-  │  ▼  irrep_decompose.decompose(irreps, χ_disp, mapping_little_group)  → n_μ(mech)
-  │  ▼  per-Wyckoff: decompose χ_disp restricted to each (species, Wyckoff) orbit
-  │
-  ├──── BUILDING-BLOCK REPS ───────────────────────────────────────────────────
-  │  ▼  mag_rep.compute_perm_characters_all(...)   → χ_perm[mag], χ_perm[all]
-  │       χ_axial[i] = det(R_i)·Tr(R_i),   χ_polar[i] = Tr(R_i)
-  │  ▼  decompose each → n_μ(perm_mag), n_μ(perm_all), n_μ(axial), n_μ(polar)
-  │
-  ├──── LABELLING ─────────────────────────────────────────────────────────────
-  │  ▼  irrep_decompose.compute_parity_suffixes(irreps, rotations, mapping_little_group)
-  │  ▼  irrep_label.bilbao_ordered_labels(k, IT, irreps, parities)
-  │       (or bilbao_match.match_irreps via HTTP if available)
-  │  ▼  irrep_decompose.compute_projection_operators / compute_basis_vectors
-  │
-  └──── OUTPUT ────────────────────────────────────────────────────────────────
-     ▼  pipeline.py sections (1)–(10) + validation
-        optional tee to file (--output)
-```
