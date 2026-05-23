@@ -45,3 +45,13 @@ scripts/
 *\ *.py
 *\(*\).py
 tests/data/distorted_structures/
+
+# Local-only test data (not for public repo)
+tests/data/*.mcif
+!tests/data/0.15_MnF2.mcif
+!tests/data/0.1066_MnSiN2.mcif
+!tests/data/1.6_NiO.mcif
+tests/data/*.cif
+tests/data/*.bsr
+tests/data/*.fp
+tests/data/*.smb
