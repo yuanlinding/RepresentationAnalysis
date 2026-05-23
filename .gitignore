@@ -31,4 +31,17 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Claude Code
 CLAUDE.md
+.claude/
+
+# Private / generated
+docs/*.pdf
+docs/plan.md
+scripts/
+
+# Duplicate / scratch files
+*\ *.py
+*\(*\).py
+tests/data/distorted_structures/
