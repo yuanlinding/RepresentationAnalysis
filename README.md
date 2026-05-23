@@ -15,9 +15,23 @@ CIF conventions (`_symmetry_Int_Tables_number`, `_atom_site_moment_crystalaxis_x
 ## Installation
 
 ```bash
-conda activate findmagsym          # spglib 2.5.0, spgrep 0.3.5, pymatgen, numpy 1.26.0
-pip install -e ".[dev]"            # installs magirrep + gemmi + seekpath + pytest
+git clone https://github.com/yuanlinding/RepresentationAnalysis.git
+cd RepresentationAnalysis
+
+# Create and activate a virtual environment (recommended)
+python -m venv .venv
+source .venv/bin/activate          # Linux / macOS
+.venv\Scripts\activate             # Windows
+
+# Install magirrep and all dependencies
+pip install -e .
+
+# Optional: install development dependencies (pytest)
+pip install -e ".[dev]"
 ```
+
+All dependencies (`numpy`, `spglib`, `spgrep`, `pymatgen`, `gemmi`, `seekpath`) are installed
+automatically from PyPI.
 
 ## Usage
 
