@@ -1123,7 +1123,8 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
 
 def _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
                                atom_labels, parent_positions, identified,
-                               bilbao_labels, kpoint, it_number, parities, irreps):
+                               bilbao_labels, kpoint, it_number, parities, irreps,
+                               lat_M=None):
     """Section (10): Verify actual moments lie in the active irrep subspace.
 
     Decomposes M_actual in the active irrep's normalized basis,
@@ -1186,27 +1187,39 @@ def _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
     print("  M  =  " + "  +  ".join(terms))
     print()
 
-    # Per-atom table
+    # parent_magmoms and basis vectors are in fractional coordinates.
+    def _to_cart(v_frac):
+        return lat_M.T @ v_frac if lat_M is not None else v_frac
+
+    # Per-atom table — two rows per atom: lattice frame then Cartesian
     cw = 28
     print(f"  {'Atom':<4}  {'Position':>24}  "
           f"{'m_actual':>{cw}}  {'m_rec':>{cw}}  {'|δ|':>7}")
     print("  " + "-" * (4 + 2 + 24 + 2 + cw + 2 + cw + 2 + 7))
 
     for i in range(N):
-        r       = parent_positions[i]
-        m_act   = parent_magmoms[i]
-        m_rec_i = M_rec[3*i:3*i+3]
-        delta   = np.linalg.norm(m_act - m_rec_i)
-        pos_str = f"({r[0]:.4f},{r[1]:.4f},{r[2]:.4f})"
-        act_str = f"[{m_act[0]:+.4f},{m_act[1]:+.4f},{m_act[2]:+.4f}]"
-        rec_str = f"[{m_rec_i[0]:+.4f},{m_rec_i[1]:+.4f},{m_rec_i[2]:+.4f}]"
+        r         = parent_positions[i]
+        m_act_f   = parent_magmoms[i]
+        m_rec_f   = M_rec[3*i:3*i+3]
+        m_act_c   = _to_cart(m_act_f)
+        m_rec_c   = _to_cart(m_rec_f)
+        delta     = np.linalg.norm(m_act_c - m_rec_c)
+        pos_str   = f"({r[0]:.4f},{r[1]:.4f},{r[2]:.4f})"
+
+        def _fmt(v):
+            return f"[{v[0]:+.4f},{v[1]:+.4f},{v[2]:+.4f}]"
+
         print(f"  {atom_labels[i]:<4}  {pos_str:>24}  "
-              f"{act_str:>{cw}}  {rec_str:>{cw}}  {delta:>7.4f}")
+              f"  frac: {_fmt(m_act_f):>{cw}}  {_fmt(m_rec_f):>{cw}}  {delta:>7.4f}")
+        print(f"  {'':4}  {'':>24}  "
+              f"  cart: {_fmt(m_act_c):>{cw}}  {_fmt(m_rec_c):>{cw}}")
 
     print()
-    M_norm   = np.linalg.norm(M_flat)
-    residual = np.linalg.norm(M_flat - M_rec) / M_norm if M_norm > 1e-10 else 0.0
-    check    = "✓" if residual < 1e-3 else "✗"
+    M_flat_cart = np.array([_to_cart(parent_magmoms[i]) for i in range(N)]).flatten()
+    M_rec_cart  = np.array([_to_cart(M_rec[3*i:3*i+3]) for i in range(N)]).flatten()
+    M_norm      = np.linalg.norm(M_flat_cart)
+    residual    = np.linalg.norm(M_flat_cart - M_rec_cart) / M_norm if M_norm > 1e-10 else 0.0
+    check       = "✓" if residual < 1e-3 else "✗"
     print(f"  ‖M - M_rec‖/‖M‖ = {residual:.4f}  {check}")
     print()
 
@@ -1332,15 +1345,24 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
     else:
         parent_M, parent_t = np.eye(3), np.zeros(3)
 
-    it_number = fields['it_number']
+    it_number = fields.get('it_number')
 
-    _dbg(verbose, f"IT number: {it_number}")
+    _dbg(verbose, f"IT number (from mCIF): {it_number}")
     _dbg(verbose, f"k-vector: {kpoint}")
     _dbg(verbose, f"Child transform  P = {child_M.tolist()},  p = {child_t.tolist()}")
     _dbg(verbose, f"Parent transform P = {parent_M.tolist()},  p = {parent_t.tolist()}")
 
     # ── 2. Extract nonzero-moment atoms + species labels ─────────────────────
     structure = parse_mcif.get_magnetic_structure(mcif_path)
+    # Lattice matrix (rows = lattice vectors) and per-axis norms, used to convert
+    # between crystal-axis, Cartesian, and fractional moment representations.
+    lat_M     = structure.lattice.matrix
+    lat_norms = np.array([np.linalg.norm(r) for r in lat_M])
+
+    # If mCIF lacked standard symmetry fields, auto-detect IT# from the structure.
+    if it_number is None:
+        it_number = _get_it_number_from_structure(structure)
+        _dbg(verbose, f"IT number auto-detected by spglib: {it_number}")
     # Parse 3D crystal-axis moments directly from mCIF (avoids pymatgen reading
     # _atom_site_moment.magnitude as a scalar instead of crystalaxis_x/y/z vector)
     gemmi_moments = parse_mcif.parse_moments_from_mcif(mcif_path)
@@ -1354,6 +1376,12 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
         if lbl in gemmi_moments
     }
 
+    # If pymatgen returned only the crystallographic ASU (non-MAGNDATA mCIF),
+    # expand to the conventional cell so the site loop sees the full atom set.
+    structure = _ensure_conventional_cell(structure, it_number, gemmi_moments)
+    lat_M     = structure.lattice.matrix
+    lat_norms = np.array([np.linalg.norm(r) for r in lat_M])
+
     mag_positions = []
     magmoms       = []
     atom_labels   = []
@@ -1364,29 +1392,44 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
         raw_m = site.properties.get("magmom")
 
         # 1. Position-based match: explicitly listed atom → use gemmi 3D vector as-is
+        #    (crystal-axis components along â, b̂, ĉ unit vectors)
         m_vec = None
+        m_vec_is_cartesian = False
         for _lbl, (ep, em) in explicit_pos_to_moment.items():
             if np.allclose(site_pos, ep, atol=1e-3):
-                m_vec = em
+                m_vec = em               # crystal-axis from gemmi
+                m_vec_is_cartesian = False
                 break
 
         if m_vec is None and site_label and site_label in gemmi_moments:
-            # 2. Label match for symmetry-generated equivalent: apply pymatgen's
-            #    signed scalar to re-orient the reference direction vector.
-            #    (Covers collinear AFM where equiv atoms have opposite sign.)
+            # 2. Label match for symmetry-generated equivalent.
+            #    Prefer pymatgen's MSG-derived 3D moment (raw_m.moment) which
+            #    correctly applies the MSG rotation+time-reversal to each site.
+            #    Fall back to the signed-scalar × reference-direction approach
+            #    only when the Magmom object carries no orientation (saxis=z default).
             m_ref = gemmi_moments[site_label]
             ref_norm = np.linalg.norm(m_ref)
             if ref_norm > 1e-8 and raw_m is not None:
-                try:
-                    scalar = float(raw_m)
-                    m_vec = (scalar / ref_norm) * m_ref
-                except (TypeError, ValueError):
-                    m_vec = m_ref
+                pm_moment = None
+                if hasattr(raw_m, 'moment'):
+                    pm_moment = np.array(raw_m.moment)
+                if pm_moment is not None and np.linalg.norm(pm_moment) > 1e-8:
+                    m_vec = pm_moment
+                    m_vec_is_cartesian = True    # pymatgen gives Cartesian
+                else:
+                    try:
+                        scalar = float(raw_m)
+                        m_vec = (scalar / ref_norm) * m_ref   # crystal-axis
+                        m_vec_is_cartesian = False
+                    except (TypeError, ValueError):
+                        m_vec = m_ref            # crystal-axis
+                        m_vec_is_cartesian = False
             else:
-                m_vec = m_ref
+                m_vec = m_ref                    # crystal-axis
+                m_vec_is_cartesian = False
 
         if m_vec is None:
-            # 3. Fall back to pymatgen's raw magmom property
+            # 3. Fall back to pymatgen's raw magmom property (Cartesian)
             if raw_m is None:
                 raw_m = getattr(site, "magmom", None)
             if raw_m is None:
@@ -1399,9 +1442,19 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
                 m_vec = np.array(raw_m)
             if m_vec.shape == () or m_vec.shape == (1,):
                 m_vec = np.array([0.0, 0.0, float(m_vec)])
+            m_vec_is_cartesian = True
 
         if np.linalg.norm(m_vec) < 0.01:
             continue
+
+        # Convert to fractional vector frame so moments are consistent with the
+        # D(g) = det(R)*R matrices that use spgrep's fractional rotation matrices.
+        # crystal-axis → fractional: divide by lattice parameter of each axis.
+        # Cartesian    → fractional: solve lat_M.T @ m_frac = m_cart.
+        if m_vec_is_cartesian:
+            m_vec = np.linalg.solve(lat_M.T, m_vec)
+        else:
+            m_vec = m_vec / lat_norms
 
         mag_positions.append(site.frac_coords)
         magmoms.append(m_vec)
@@ -1634,7 +1687,8 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
                                  parities, irreps, mode='displacive')
         _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
                                    atom_labels, parent_positions, identified,
-                                   bilbao_labels, kpoint, it_number, parities, irreps)
+                                   bilbao_labels, kpoint, it_number, parities, irreps,
+                                   lat_M=lat_M)
         _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
                           parities, irreps)
         if displacive_pass:
@@ -1655,6 +1709,78 @@ def _get_it_number_from_structure(structure) -> int:
     if dataset is None:
         raise RuntimeError("spglib could not determine the space group of the structure.")
     return int(dataset.number if hasattr(dataset, 'number') else dataset['number'])
+
+
+def _ensure_conventional_cell(structure, it_number: int, gemmi_moments: dict):
+    """Expand the structure to the conventional cell if pymatgen returned only the ASU.
+
+    Non-MAGNDATA mCIF files list only the crystallographic asymmetric unit.
+    pymatgen's magnetic CIF reader returns those atoms verbatim without expanding
+    them by _symmetry_equiv_pos_as_xyz.  spglib then sees a sub-group symmetry
+    (higher IT number).  This function detects that case and re-expands using
+    Structure.from_spacegroup, assigning site labels and moments from gemmi_moments.
+    """
+    from pymatgen.core import Element, Structure as PmgStructure
+    from pymatgen.core.sites import PeriodicSite
+    from pymatgen.electronic_structure.core import Magmom
+
+    cell = (
+        structure.lattice.matrix,
+        structure.frac_coords,
+        [Element(s.specie.symbol).Z for s in structure],
+    )
+    ds = spglib.get_symmetry_dataset(cell, symprec=1e-2)
+    if ds is None:
+        return structure
+    detected_it = int(ds.number if hasattr(ds, 'number') else ds['number'])
+    if detected_it == it_number:
+        return structure  # already the conventional cell
+
+    # Collect ASU labels and coords from the (under-expanded) input structure
+    asu_labels = []
+    for i, site in enumerate(structure):
+        lbl = getattr(site, 'label', None) or site.properties.get('label', '')
+        if not lbl:
+            lbl = f"{site.species_string}{i}"
+        asu_labels.append(lbl)
+
+    asu_species = [s.species_string for s in structure]
+    asu_coords  = [s.frac_coords.tolist() for s in structure]
+
+    try:
+        expanded = PmgStructure.from_spacegroup(
+            it_number, structure.lattice, asu_species, asu_coords)
+    except Exception:
+        return structure
+
+    # Use spglib on the expanded cell to find which orbit each atom belongs to.
+    # sorted(set(equiv)) gives orbit representatives in ascending index order,
+    # which equals the order in which from_spacegroup received the ASU species.
+    cell_exp = (
+        expanded.lattice.matrix,
+        expanded.frac_coords,
+        [Element(s.specie.symbol).Z for s in expanded],
+    )
+    ds_exp = spglib.get_symmetry_dataset(cell_exp, symprec=1e-3)
+    if ds_exp is None:
+        return structure
+    equiv = (ds_exp.equivalent_atoms if hasattr(ds_exp, 'equivalent_atoms')
+             else ds_exp['equivalent_atoms'])
+
+    group_reps = sorted(set(equiv.tolist()))
+    rep_to_label = {rep: asu_labels[i]
+                    for i, rep in enumerate(group_reps)
+                    if i < len(asu_labels)}
+
+    sites = []
+    for i, site in enumerate(expanded):
+        lbl = rep_to_label.get(int(equiv[i]), '')
+        m   = gemmi_moments.get(lbl, np.zeros(3))
+        sites.append(PeriodicSite(
+            site.species, site.frac_coords, site.lattice,
+            properties={'label': lbl, 'magmom': Magmom(m)}
+        ))
+    return PmgStructure.from_sites(sites)
 
 
 def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = False,
@@ -1684,13 +1810,15 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
 
     if is_mcif:
         kpoint    = parse_mcif.parse_kvector(fields['kvector_str'])
-        it_number = fields['it_number']
+        it_number = fields.get('it_number')
         child_M, child_t = parse_mcif.parse_transform(fields['child_transform_str'])
         if 'parent_transform_str' in fields:
             parent_M, parent_t = parse_mcif.parse_transform(fields['parent_transform_str'])
         else:
             parent_M, parent_t = np.eye(3), np.zeros(3)
         structure = parse_mcif.get_magnetic_structure(path)
+        if it_number is None:
+            it_number = _get_it_number_from_structure(structure)
     else:
         # Plain CIF
         structure = Structure.from_file(path)

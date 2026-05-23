@@ -1,9 +1,13 @@
 # magirrep
 
 Bertaut representational analysis for magnetic structures. Given an mCIF file from
-[Bilbao MAGNDATA](https://www.cryst.ehu.es/magndata/), determine which magnetic
-irreducible representation(s) drive the paramagnetic-to-magnetically-ordered phase
-transition. Also computes the phonon/mechanical representation for any CIF file.
+[Bilbao MAGNDATA](https://www.cryst.ehu.es/magndata/) or a hand-crafted mCIF,
+determine which magnetic irreducible representation(s) drive the paramagnetic-to-magnetically-ordered
+phase transition. Also computes the phonon/mechanical representation for any CIF file.
+
+Supports both MAGNDATA-style mCIF files (with `_parent_space_group.it_number` and
+`_atom_site_moment.crystalaxis_x`) and plain/hand-crafted mCIF files that use older CIF
+conventions (`_symmetry_Int_Tables_number`, `_atom_site_moment_crystalaxis_x`).
 
 ## Installation
 
@@ -130,21 +134,29 @@ The combined report contains 10 sections followed by a validation block:
 
 ## Validation targets
 
+### MAGNDATA mCIF files
+
 | File | Active irrep | k | Parent SG | ‖M−M_rec‖/‖M‖ |
 |------|-------------|---|-----------|----------------|
 | `1.6_NiO.mcif` | **mL3+** (dim=2) | L=(½,½,½) | #225 Fm-3m (FCC) | 0.000 ✓ |
 | `0.15_MnF2.mcif` | **mGM3+** (dim=1, AFM) | Γ | #136 P4₂/mnm | 0.000 ✓ |
 | `1.708_CrPS4.mcif` | **mX2** (dim=1) | (0,0,½) | #5 C2 (C-centered) | 0.000 ✓ |
 | `0.222_CuMnAs.mcif` | **mGM5−** (dim=2) | Γ | #129 P4/nmm | 0.000 ✓ |
+| `0.7_ScMnO3.mcif` | **mGM2** (dim=1) | Γ | #185 P6₃cm | 0.000 ✓ |
+| `1.207_U2Rh2Sn.mcif` | **mZ4−** (dim=1) | Z=(0,0,½) | #127 P4/mbm | 0.000 ✓ |
+| `1.3_Sr2IrO4.mcif` | **mGM4−** (dim=1) | Γ | #142 I4₁/acd | 0.000 ✓ |
+| `LaFeO3_Pnma.mcif` | **mGM2+** (dim=1) | Γ | #62 Pnma | 0.000 ✓ |
 
-> **Note on k-point labels**: For monoclinic C2 (CrPS4), seekpath labels the zone-boundary
-> point (0,0,½) as **X** while Bilbao MAGNDATA uses **A**. The physics is correct; only the
-> label in the validation line differs (`mX2` identified vs `mA2` stored).
+### Plain mCIF files (non-MAGNDATA)
 
-Expected phonon decompositions:
+| File | Active irrep | k | Parent SG | ‖M−M_rec‖/‖M‖ |
+|------|-------------|---|-----------|----------------|
+| `Mn3Al_PRA_7_064036.mcif` | **mGM4+** (dim=3) | Γ | #225 Fm-3m | 0.000 ✓ |
 
-- **CuMnAs** `Γ_mech = 2·mGM1+ ⊕ 3·mGM2- ⊕ 3·mGM5+ ⊕ 3·mGM5- ⊕ 1·mGM3+`
-- **NiO** `Γ_mech = 3·mL1+ ⊕ 1·mL1- ⊕ 1·mL2+ ⊕ 3·mL2- ⊕ 4·mL3+ ⊕ 4·mL3-`
+> **Notes on label conventions:**
+> - **CrPS4**: seekpath labels (0,0,½) as **X**; MAGNDATA uses **A**. Physics is correct; only the Bilbao label differs.
+> - **Sr2IrO4**: MAGNDATA stores `mM4` but the pipeline identifies `mGM4−`. The propagation vector (1,1,1) in the body-centered conventional cell is equivalent to Γ in the primitive cell, so both labels refer to the same physics.
+> - **Mn3Al**: plain mCIF with old CIF-style symmetry fields and a ferrimagnetic order (Mn1: −2.8 μB, Mn2: +1.4 μB). The moment reconstruction residual is zero, but the irrep multiplicities in section (8) are non-integer for centered-lattice structures (known limitation — does not affect the active irrep identification or section (10)).
 
 ## Running tests
 

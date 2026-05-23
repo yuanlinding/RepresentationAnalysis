@@ -1,0 +1,56 @@
+# Created by the Bilbao Crystallographic Server
+# http://www.cryst.ehu.es
+# Date: 06/07/2025 05:03:21
+
+# LaFeO3_Pnma.vasp
+
+# --- Magnetic Structure Data ---
+
+data_WYVJGehf
+_audit_creation_date               2025-07-06
+_audit_creation_method             "Bilbao Crystallographic Server"
+###non-st# _data_type "magnetic"
+_space_group_magn.number_BNS  62.446
+_space_group_magn.name_BNS  "?"
+_space_group_magn.transform_BNS_Pp_abc  "a,b,c"
+_cell_length_a                     5.56800
+_cell_length_b                     7.85610
+_cell_length_c                     5.55370
+_cell_angle_alpha                  90.00000
+_cell_angle_beta                   90.00000
+_cell_angle_gamma                  90.00000
+
+loop_
+_space_group_symop_magn_operation.id
+_space_group_symop_magn_operation.xyz
+1   x,y,z,+1
+2   -x+1/2,-y,z+1/2,+1
+3   -x,-y,-z,+1
+4   x+1/2,y,-z+1/2,+1
+5   x+1/2,-y+1/2,-z+1/2,-1
+6   -x,y+1/2,-z,-1
+7   -x+1/2,y+1/2,z+1/2,-1
+8   x,-y+1/2,z,-1
+
+
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+Fe1 Fe 0.00000 0.00000 0.50000 1.0000
+La1 La 0.47260 0.25000 0.49550 1.0000
+O1 O 0.01700 0.25000 0.57500 1.0000
+O2 O 0.27500 0.53500 0.72300 1.0000
+
+loop_
+_atom_site_moment.label
+_atom_site_moment.crystalaxis_x
+_atom_site_moment.crystalaxis_y
+_atom_site_moment.crystalaxis_z
+Fe1 0.000 -3.000 0.000
+La1 0.000 0.000 0.000
+O1 0.000 0.000 0.000
+O2 0.000 0.000 0.000

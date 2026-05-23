@@ -15,11 +15,29 @@ def parse_mcif_fields(path: str) -> dict:
     
     fields = {}
     
-    # IT number
+    # IT number — primary source: _parent_space_group.IT_number
     it_val = block.find_value('_parent_space_group.it_number')
     if it_val:
         fields['it_number'] = int(it_val)
-        
+    else:
+        # Fallback 1: extract parent SG from BNS number "62.446" → 62
+        bns_val = block.find_value('_space_group_magn.number_bns')
+        if bns_val:
+            try:
+                fields['it_number'] = int(bns_val.strip("'\"").split('.')[0])
+            except (ValueError, IndexError):
+                pass
+    # Fallback 2: old CIF convention (e.g. hand-crafted or non-MAGNDATA mCIF)
+    if 'it_number' not in fields:
+        for _tag in ('_symmetry_Int_Tables_number', '_symmetry.Int_Tables_number'):
+            _val = block.find_value(_tag)
+            if _val:
+                try:
+                    fields['it_number'] = int(_val.strip("'\""))
+                except ValueError:
+                    pass
+                break
+
     # k-vector (assuming single k-vector for now)
     import re
     # Try to find the exact brackets for k-vector which avoids CIF parsing truncation
@@ -34,10 +52,18 @@ def parse_mcif_fields(path: str) -> dict:
     else:
         fields['kvector_str'] = "0 0 0"
 
-    # child transform Pp_abc
+    # child transform Pp_abc — primary source: _parent_space_group.child_transform_Pp_abc
     child_transform = block.find_value('_parent_space_group.child_transform_pp_abc')
     if child_transform:
         fields['child_transform_str'] = child_transform.strip("'\"")
+    else:
+        # Fallback: BNS transform field, then identity
+        bns_transform = block.find_value('_space_group_magn.transform_bns_pp_abc')
+        if bns_transform and bns_transform.strip("'\"") not in {'.', '?'}:
+            t = bns_transform.strip("'\"")
+            fields['child_transform_str'] = t if ';' in t else t + ';0,0,0'
+        else:
+            fields['child_transform_str'] = 'a,b,c;0,0,0'
 
     # parent transform Pp_abc (to standard setting)
     parent_transform = block.find_value('_parent_space_group.transform_pp_abc')
@@ -133,6 +159,10 @@ def parse_moments_from_mcif(path: str) -> dict:
     moments = {}
     tab = block.find('_atom_site_moment.',
                      ['label', 'crystalaxis_x', 'crystalaxis_y', 'crystalaxis_z'])
+    if len(tab) == 0:
+        # Old-style CIF: _atom_site_moment_label / _atom_site_moment_crystalaxis_x
+        tab = block.find('_atom_site_moment_',
+                         ['label', 'crystalaxis_x', 'crystalaxis_y', 'crystalaxis_z'])
     for row in tab:
         label = row.str(0)
         try:
