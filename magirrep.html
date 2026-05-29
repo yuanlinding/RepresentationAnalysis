@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>magirrep — Magnetic Irrep Analysis</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+    .subtitle { color: #555; margin-bottom: 1.5rem; font-size: 0.95rem; }
+    .drop-zone {
+      border: 2px dashed #aaa; border-radius: 6px; padding: 2rem;
+      text-align: center; cursor: pointer; transition: background 0.2s;
+      background: #fafafa;
+    }
+    .drop-zone.drag-over { background: #eef4ff; border-color: #4a90e2; }
+    .drop-zone input[type=file] { display: none; }
+    .drop-zone .filename { font-size: 0.9rem; color: #333; margin-top: 0.5rem; }
+    .modes { margin: 1rem 0; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .modes label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+    .kvector-row { margin: 0.5rem 0 1rem; display: none; align-items: center; gap: 0.5rem; }
+    .kvector-row input { border: 1px solid #ccc; border-radius: 4px; padding: 0.3rem 0.5rem; width: 140px; font-family: monospace; }
+    button#run-btn {
+      background: #2c5f8a; color: #fff; border: none; border-radius: 4px;
+      padding: 0.6rem 1.4rem; font-size: 1rem; cursor: pointer;
+    }
+    button#run-btn:disabled { background: #aaa; cursor: not-allowed; }
+    .status { margin-top: 0.75rem; font-size: 0.9rem; color: #555; min-height: 1.2em; }
+    pre#output {
+      background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px;
+      padding: 1rem; overflow-x: auto; white-space: pre-wrap; font-size: 0.82rem;
+      margin-top: 1rem; display: none;
+    }
+    button#dl-btn {
+      display: none; margin-top: 0.5rem; background: #fff;
+      border: 1px solid #2c5f8a; color: #2c5f8a; border-radius: 4px;
+      padding: 0.4rem 1rem; cursor: pointer; font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>magirrep</h1>
+  <p class="subtitle">Bertaut representational analysis for magnetic structures.
+    Upload an mCIF file from <a href="https://www.cryst.ehu.es/magndata/" target="_blank">Bilbao MAGNDATA</a>
+    or a hand-crafted mCIF.</p>
+
+  <div class="drop-zone" id="drop-zone">
+    <input type="file" id="file-input" accept=".mcif,.cif">
+    <div>Drag &amp; drop an <strong>.mcif</strong> or <strong>.cif</strong> file here,<br>or <u>click to browse</u></div>
+    <div class="filename" id="filename-label"></div>
+  </div>
+
+  <div class="modes">
+    <label><input type="radio" name="mode" value="combined" checked> Combined (magnetic + displacive)</label>
+    <label><input type="radio" name="mode" value="magnetic"> Magnetic only (faster)</label>
+    <label><input type="radio" name="mode" value="displacive"> Displacive</label>
+  </div>
+
+  <div class="kvector-row" id="kvector-row">
+    <label for="kvector">k-vector:</label>
+    <input type="text" id="kvector" placeholder="e.g. 0,1/2,0" value="">
+    <span style="font-size:0.85rem;color:#777">(leave blank to read from file)</span>
+  </div>
+
+  <button id="run-btn">Run Analysis</button>
+  <div class="status" id="status"></div>
+  <pre id="output"></pre>
+  <button id="dl-btn">Download result (.txt)</button>
+
+  <script>
+    const API = 'YOUR_RENDER_URL';  // e.g. https://magirrep-web.onrender.com
+
+    const dropZone   = document.getElementById('drop-zone');
+    const fileInput  = document.getElementById('file-input');
+    const filenameLabel = document.getElementById('filename-label');
+    const runBtn     = document.getElementById('run-btn');
+    const statusEl   = document.getElementById('status');
+    const outputEl   = document.getElementById('output');
+    const dlBtn      = document.getElementById('dl-btn');
+    const kvectorRow = document.getElementById('kvector-row');
+    const kvectorIn  = document.getElementById('kvector');
+
+    let selectedFile = null;
+
+    // --- file selection ---
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+      setFile(e.dataTransfer.files[0]);
+    });
+
+    function setFile(f) {
+      if (!f) return;
+      const ext = f.name.split('.').pop().toLowerCase();
+      if (!['mcif', 'cif'].includes(ext)) {
+        statusEl.textContent = 'Please upload a .mcif or .cif file.';
+        return;
+      }
+      selectedFile = f;
+      filenameLabel.textContent = f.name;
+      statusEl.textContent = '';
+    }
+
+    // --- mode toggle ---
+    document.querySelectorAll('input[name=mode]').forEach(r => {
+      r.addEventListener('change', () => {
+        kvectorRow.style.display = r.value === 'displacive' ? 'flex' : 'none';
+      });
+    });
+
+    // --- run ---
+    runBtn.addEventListener('click', async () => {
+      if (!selectedFile) { statusEl.textContent = 'Please select a file first.'; return; }
+
+      const mode    = document.querySelector('input[name=mode]:checked').value;
+      const kvector = kvectorIn.value.trim();
+
+      const fd = new FormData();
+      fd.append('file', selectedFile);
+      fd.append('mode', mode);
+      if (kvector) fd.append('kvector', kvector);
+
+      runBtn.disabled = true;
+      outputEl.style.display = 'none';
+      dlBtn.style.display = 'none';
+      statusEl.textContent = 'Running… (first request may take ~20 s if the server is cold)';
+
+      try {
+        const resp = await fetch(`${API}/analyze`, { method: 'POST', body: fd });
+        const text = await resp.text();
+        if (!resp.ok) {
+          let msg = text;
+          try { msg = JSON.parse(text).detail; } catch (_) {}
+          statusEl.textContent = `Error: ${msg}`;
+        } else {
+          outputEl.textContent = text;
+          outputEl.style.display = 'block';
+          dlBtn.style.display = 'inline-block';
+          statusEl.textContent = 'Done.';
+          // store for download
+          dlBtn._text = text;
+          dlBtn._name = selectedFile.name.replace(/\.[^.]+$/, '') + '_magirrep.txt';
+        }
+      } catch (err) {
+        statusEl.textContent = `Network error: ${err.message}`;
+      } finally {
+        runBtn.disabled = false;
+      }
+    });
+
+    // --- download ---
+    dlBtn.addEventListener('click', () => {
+      const blob = new Blob([dlBtn._text], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = dlBtn._name;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+  </script>
+</body>
+</html>
