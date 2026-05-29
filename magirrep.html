@@ -42,7 +42,7 @@
 <body>
   <h1>magirrep</h1>
   <p class="subtitle">Bertaut representational analysis for magnetic structures.
-    Upload an mCIF file from <a href="https://www.cryst.ehu.es/magndata/" target="_blank">Bilbao MAGNDATA</a>
+    Upload an mCIF file from <a href="https://www.cryst.ehu.es/magndata/" target="_blank" rel="noopener noreferrer">Bilbao MAGNDATA</a>
     or a hand-crafted mCIF.</p>
 
   <div class="drop-zone" id="drop-zone">
@@ -81,13 +81,20 @@
     const kvectorRow = document.getElementById('kvector-row');
     const kvectorIn  = document.getElementById('kvector');
 
+    if (API.startsWith('YOUR_')) {
+      statusEl.textContent = 'Configuration error: backend URL not set.';
+      runBtn.disabled = true;
+    }
+
     let selectedFile = null;
 
     // --- file selection ---
     dropZone.addEventListener('click', () => fileInput.click());
     fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
     dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+    dropZone.addEventListener('dragleave', e => {
+      if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('drag-over');
+    });
     dropZone.addEventListener('drop', e => {
       e.preventDefault();
       dropZone.classList.remove('drag-over');
@@ -135,7 +142,8 @@
         const text = await resp.text();
         if (!resp.ok) {
           let msg = text;
-          try { msg = JSON.parse(text).detail; } catch (_) {}
+          try { msg = JSON.parse(text).detail ?? text; } catch (_) {}
+          if (msg.length > 300) msg = msg.slice(0, 300) + '…';
           statusEl.textContent = `Error: ${msg}`;
         } else {
           outputEl.textContent = text;
