@@ -1,0 +1,9 @@
+numpy
+spglib
+spgrep
+pymatgen
+gemmi
+seekpath
+
+[dev]
+pytest>=7

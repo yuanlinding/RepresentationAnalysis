@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: magirrep
+Version: 0.1.0
+Summary: Determine the active magnetic irreducible representation from an mCIF file
+Requires-Python: >=3.9
+Requires-Dist: numpy
+Requires-Dist: spglib
+Requires-Dist: spgrep
+Requires-Dist: pymatgen
+Requires-Dist: gemmi
+Requires-Dist: seekpath
+Provides-Extra: dev
+Requires-Dist: pytest>=7; extra == "dev"
