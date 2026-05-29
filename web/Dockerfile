@@ -9,9 +9,12 @@ RUN apt-get update \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    "git+https://github.com/yuanlinding/RepresentationAnalysis"
+    "git+https://github.com/yuanlinding/RepresentationAnalysis@96e08374d75d8a74d003232450df540090df2ddc"
 
 COPY app.py .
+
+RUN adduser --disabled-password --gecos "" appuser
+USER appuser
 
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
