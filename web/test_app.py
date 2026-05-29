@@ -80,3 +80,15 @@ def test_analyze_no_filename():
         files={"file": ("", b"dummy", "application/octet-stream")},
     )
     assert r.status_code == 422
+
+
+def test_analyze_displacive():
+    with open(NIO_MCIF, "rb") as f:
+        r = client.post(
+            "/analyze",
+            data={"mode": "displacive"},
+            files={"file": ("1.6_NiO.mcif", f, "application/octet-stream")},
+        )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    assert len(r.text) > 200

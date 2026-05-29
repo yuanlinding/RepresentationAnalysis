@@ -59,7 +59,10 @@ async def analyze(
     except asyncio.TimeoutError:
         raise HTTPException(status_code=500, detail="Analysis timed out (>30 s)")
     except (Exception, SystemExit) as exc:
-        raise HTTPException(status_code=500, detail=str(exc) or "Analysis failed")
+        msg = str(exc)
+        if not msg or msg == "1":
+            msg = "Analysis failed (check that the file contains magnetic atoms and a valid propagation vector)"
+        raise HTTPException(status_code=500, detail=msg)
 
     return result
 
