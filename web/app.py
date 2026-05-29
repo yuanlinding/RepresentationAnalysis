@@ -54,10 +54,10 @@ async def analyze(
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(_executor, _run, content, suffix, mode, kvector),
-            timeout=30.0,
+            timeout=180.0,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=500, detail="Analysis timed out (>30 s)")
+        raise HTTPException(status_code=500, detail="Analysis timed out (>3 min)")
     except (Exception, SystemExit) as exc:
         msg = str(exc)
         if not msg or msg == "1":
