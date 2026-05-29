@@ -802,6 +802,25 @@ def _decomp_str(n_mu_array, irreps, parities, bilbao_labels, kpoint, it_number):
     return "  ⊕  ".join(terms) if terms else "0"
 
 
+def _co_active_set(identified: list) -> set:
+    """Return the set of co-active irrep indices (those with significant η).
+
+    A structure requiring multiple irreps (e.g. La2NiO4 in P4₂/ncm) produces
+    several entries in *identified* each with η ≈ 1/√2.  When the best η < 0.95
+    all entries with η ≥ 0.5 × η_best are included so they are all marked ACTIVE
+    and the moment is reconstructed from their combined basis.  The top irrep is
+    always included as a fallback even when η is unusually small.
+    """
+    if not identified:
+        return set()
+    eta_best = identified[0][2]
+    if eta_best >= 0.95:
+        return {identified[0][0]}
+    eta_min = 0.5 * eta_best
+    co = {idx for idx, _, eta, _ in identified if eta >= eta_min and eta > 1e-3}
+    return co or {identified[0][0]}
+
+
 def _print_decomposition_extended(
         n_mu_mag, n_mu_perm_mag,
         n_mu_mech, n_mu_perm_all,
@@ -886,7 +905,7 @@ def _print_decomposition_extended(
         return
 
     eta_map   = {idx: eta for idx, _n, eta, _ in (identified or [])}
-    best_mag  = identified[0][0]       if identified       else None
+    co_mag    = _co_active_set(identified)
     best_mech = identified_mech[0][0]  if identified_mech  else None
 
     if has_mag and has_mech:
@@ -907,10 +926,10 @@ def _print_decomposition_extended(
         n_p = n_mu_m[idx]
 
         if has_mag and has_mech:
-            marker = "  ← ACTIVE" if idx == best_mag else ""
+            marker = "  ← ACTIVE" if idx in co_mag else ""
             print(f"  {lbl:<12}  {d:>4}  {_nstr(n_m):>9}  {_nstr(n_p):>10}  {eta:>7.3f}{marker}")
         elif has_mag:
-            marker = "  ← ACTIVE" if idx == best_mag else ""
+            marker = "  ← ACTIVE" if idx in co_mag else ""
             print(f"  {lbl:<12}  {d:>4}  {_nstr(n_m):>9}  {eta:>7.3f}{marker}")
         else:
             print(f"  {lbl:<12}  {d:>4}  {_nstr(n_p):>10}")
@@ -1005,9 +1024,9 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
         p = parities[alpha] if parities else ''
         return irrep_label.irrep_name(kpoint, it_number, alpha, d, p)
 
-    N        = len(parent_positions)
-    eta_map  = {idx: eta for idx, _n, eta, _m in (identified or [])}
-    best_idx = identified[0][0] if identified else None
+    N            = len(parent_positions)
+    eta_map      = {idx: eta for idx, _n, eta, _m in (identified or [])}
+    co_active_bv = _co_active_set(identified)
 
     # Pre-assign global BV numbers
     bv_numbers = {}   # (irrep_idx, local_i) -> global_num
@@ -1097,7 +1116,7 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
         lbl        = _lbl(idx)
         eta        = eta_map.get(idx, 0.0)
         basis_vecs = all_basis[idx]
-        is_active  = (idx == best_idx)
+        is_active  = (idx in co_active_bv)
 
         if not basis_vecs:
             row = f"  {lbl:<{ir_w}}  {'—':<{bv_w}}  (no basis vectors found)"
@@ -1125,21 +1144,21 @@ def _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
                                atom_labels, parent_positions, identified,
                                bilbao_labels, kpoint, it_number, parities, irreps,
                                lat_M=None):
-    """Section (10): Verify actual moments lie in the active irrep subspace.
+    """Section (10): Verify actual moments lie in the co-active irrep subspace.
 
-    Decomposes M_actual in the active irrep's normalized basis,
-    reconstructs M_rec = Σ c_i ψ_i, and shows a per-atom comparison table.
+    For single-irrep structures (η ≈ 1) reconstructs M from that irrep alone.
+    For multi-irrep structures (e.g. La2NiO4 where two irreps combine 50/50)
+    reconstructs M from the combined basis of all co-active irreps so the
+    residual reflects the true fit quality.
 
-    The display coefficients α_i satisfy M ≈ Σ α_i φ_i where φ_i are the
-    integer-scaled basis vectors from section (9); they equal
+    Display coefficients α_i satisfy M ≈ Σ α_i φ_i where φ_i are the
+    integer-scaled basis vectors from section (9):
         α_i = <ψ_i | M>  ×  min_nonzero(|ψ_i|)
-    which gives physically meaningful amplitudes (e.g. −3.600 for the
-    dominant mode in CuMnAs with |m_Mn| = 3.6 μB/f.u.).
     """
     if not identified:
         return
 
-    best_idx = identified[0][0]
+    co_set = _co_active_set(identified)
 
     def _lbl(alpha):
         if bilbao_labels and alpha in bilbao_labels:
@@ -1148,63 +1167,73 @@ def _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
         p = parities[alpha] if parities else ''
         return irrep_label.irrep_name(kpoint, it_number, alpha, d, p)
 
-    label      = _lbl(best_idx)
-    N          = len(parent_positions)
-    M_flat     = parent_magmoms.flatten().astype(float)
-    basis_vecs = all_basis[best_idx]
-
-    # Global ψ index offset: count BVs in active irreps that precede best_idx
-    bv_offset = 0
+    # Build global ψ numbering (same ordering as section 9)
+    bv_global: dict = {}
+    bv_count = 0
     for idx, _ in active_irreps:
-        if idx == best_idx:
-            break
-        bv_offset += len(all_basis[idx])
+        for i in range(len(all_basis[idx])):
+            bv_count += 1
+            bv_global[(idx, i)] = bv_count
 
-    print(f"(10) MOMENT–IRREP CONSISTENCY  (active small representation: {label})\n")
+    # Collect co-active basis vectors with metadata
+    co_items   = [(idx, n, eta, mp) for idx, n, eta, mp in identified if idx in co_set]
+    co_bvecs   = []   # (normalised_bv, global_ψ_num, irrep_label)
+    for idx, *_ in co_items:
+        lbl = _lbl(idx)
+        for i, bv in enumerate(all_basis[idx]):
+            co_bvecs.append((bv, bv_global.get((idx, i), 0), lbl))
 
-    if not basis_vecs:
-        print(f"  No basis vectors available for {label}; cannot verify.")
+    is_multi   = len(co_set) > 1
+    label_str  = ("  ⊕  ".join(_lbl(idx) for idx, *_ in co_items)
+                  if is_multi else _lbl(co_items[0][0]))
+    header     = ("co-active small representations" if is_multi
+                  else "active small representation")
+
+    N      = len(parent_positions)
+    M_flat = parent_magmoms.flatten().astype(float)
+
+    print(f"(10) MOMENT–IRREP CONSISTENCY  ({header}: {label_str})\n")
+
+    if not co_bvecs:
+        print(f"  No basis vectors available for {label_str}; cannot verify.")
         print()
         return
 
     # Coefficients in the normalised basis: c_i = <ψ_i | M>
-    coeffs_norm = [float(np.real(np.vdot(v, M_flat))) for v in basis_vecs]
+    coeffs_norm = [float(np.real(np.vdot(bv, M_flat))) for bv, _, _ in co_bvecs]
 
-    # Display coefficients α_i = c_i × min_nonzero(|ψ_i|)
-    # so that M ≈ Σ α_i φ_i  (φ_i = integer-scaled display vectors)
+    # Display coefficients: α_i = c_i × min_nonzero(|ψ_i|)
     def _disp_coeff(v, c, tol=1e-4):
         nz = np.abs(v.real[np.abs(v.real) > tol])
         return c * float(np.min(nz)) if len(nz) else 0.0
 
-    alphas = [_disp_coeff(v, c) for v, c in zip(basis_vecs, coeffs_norm)]
+    alphas = [_disp_coeff(bv, c) for (bv, _, _), c in zip(co_bvecs, coeffs_norm)]
 
-    # Reconstructed moment vector from the active-irrep basis
-    M_rec = np.real(sum(c * v for c, v in zip(coeffs_norm, basis_vecs)))
+    # Reconstructed M from combined co-active basis
+    M_rec = np.real(sum(c * bv for c, (bv, _, _) in zip(coeffs_norm, co_bvecs)))
 
-    # Decomposition formula
-    terms = [f"({a:+.4f})·ψ{bv_offset + i + 1}"
-             for i, a in enumerate(alphas)]
+    # Decomposition formula (include irrep label in brackets for multi-irrep case)
+    terms = [f"({a:+.4f})·ψ{gpsi}" + (f" [{lbl}]" if is_multi else "")
+             for a, (_, gpsi, lbl) in zip(alphas, co_bvecs)]
     print("  M  =  " + "  +  ".join(terms))
     print()
 
-    # parent_magmoms and basis vectors are in fractional coordinates.
     def _to_cart(v_frac):
         return lat_M.T @ v_frac if lat_M is not None else v_frac
 
-    # Per-atom table — two rows per atom: lattice frame then Cartesian
     cw = 28
     print(f"  {'Atom':<4}  {'Position':>24}  "
           f"{'m_actual':>{cw}}  {'m_rec':>{cw}}  {'|δ|':>7}")
     print("  " + "-" * (4 + 2 + 24 + 2 + cw + 2 + cw + 2 + 7))
 
     for i in range(N):
-        r         = parent_positions[i]
-        m_act_f   = parent_magmoms[i]
-        m_rec_f   = M_rec[3*i:3*i+3]
-        m_act_c   = _to_cart(m_act_f)
-        m_rec_c   = _to_cart(m_rec_f)
-        delta     = np.linalg.norm(m_act_c - m_rec_c)
-        pos_str   = f"({r[0]:.4f},{r[1]:.4f},{r[2]:.4f})"
+        r       = parent_positions[i]
+        m_act_f = parent_magmoms[i]
+        m_rec_f = M_rec[3*i:3*i+3]
+        m_act_c = _to_cart(m_act_f)
+        m_rec_c = _to_cart(m_rec_f)
+        delta   = np.linalg.norm(m_act_c - m_rec_c)
+        pos_str = f"({r[0]:.4f},{r[1]:.4f},{r[2]:.4f})"
 
         def _fmt(v):
             return f"[{v[0]:+.4f},{v[1]:+.4f},{v[2]:+.4f}]"
@@ -1314,14 +1343,15 @@ def _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
 
     print("Validation:")
     if identified:
-        best_idx = identified[0][0]
-        best_label = _lbl(best_idx)
+        co_set    = _co_active_set(identified)
+        co_labels = [_lbl(idx) for idx, *_ in identified if idx in co_set]
+        id_str    = "  \u2295  ".join(co_labels) if len(co_labels) > 1 else co_labels[0]
         if expected_id:
-            match = "  \u2713" if best_label == expected_id else \
-                    f"  \u2717 (identified: {best_label})"
+            match = ("  \u2713" if expected_id in co_labels
+                     else f"  \u2717 (identified: {id_str})")
             print(f"  Stored _irrep_id = {expected_id}{match}")
         else:
-            print(f"  Identified: {best_label}  (no _irrep_id stored in mCIF)")
+            print(f"  Identified: {id_str}  (no _irrep_id stored in mCIF)")
     else:
         print(f"  Stored _irrep_id = {expected_id}  (no active irrep identified)")
     print()
@@ -1676,9 +1706,9 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
             wyckoff_mech=wyckoff_mech_decomps if displacive_pass else None)
         _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions,
                              identified, bilbao_labels, kpoint, it_number, parities, irreps)
-        if identified:
-            best_idx, n_best, eta_best, _ = identified[0]
-            _format_sk_constraints(best_idx, n_best, eta_best, all_basis, atom_labels,
+        for _idx, _n, _eta, _ in [item for item in identified
+                                       if item[0] in _co_active_set(identified)]:
+            _format_sk_constraints(_idx, _n, _eta, all_basis, atom_labels,
                                    parent_positions, bilbao_labels, kpoint, it_number,
                                    parities, irreps, mode='magnetic')
         if displacive_pass and active_mech:
