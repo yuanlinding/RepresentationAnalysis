@@ -44,13 +44,13 @@ async def analyze(
     if mode not in ("combined", "magnetic", "displacive"):
         raise HTTPException(status_code=422, detail=f"Invalid mode: {mode!r}")
 
-    suffix = os.path.splitext(file.filename)[1].lower()
+    suffix = os.path.splitext(file.filename or "")[1].lower()
     if suffix not in (".mcif", ".cif"):
         raise HTTPException(status_code=422, detail="File must be .mcif or .cif")
 
     content = await file.read()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(_executor, _run, content, suffix, mode, kvector),
@@ -58,8 +58,8 @@ async def analyze(
         )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=500, detail="Analysis timed out (>30 s)")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except (Exception, SystemExit) as exc:
+        raise HTTPException(status_code=500, detail=str(exc) or "Analysis failed")
 
     return result
 

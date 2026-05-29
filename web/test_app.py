@@ -60,3 +60,23 @@ def test_analyze_combined():
         )
     assert r.status_code == 200
     assert len(r.text) > 200
+
+
+def test_analyze_combined_content_type():
+    with open(NIO_MCIF, "rb") as f:
+        r = client.post(
+            "/analyze",
+            data={"mode": "combined"},
+            files={"file": ("1.6_NiO.mcif", f, "application/octet-stream")},
+        )
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_analyze_no_filename():
+    r = client.post(
+        "/analyze",
+        data={"mode": "combined"},
+        files={"file": ("", b"dummy", "application/octet-stream")},
+    )
+    assert r.status_code == 422
