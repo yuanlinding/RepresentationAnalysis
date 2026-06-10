@@ -79,6 +79,31 @@ class TestCenteringAwareMatching:
         assert len(get_centering_translations(138)) == 1   # P4_2/ncm
         assert len(get_centering_translations(225)) == 4   # Fm-3m
 
+    def test_polar_axial_decomposition_nonnegative(self, lg):
+        """Γ_polar (χ=Tr(R)) and Γ_axial (χ=det(R)Tr(R)) are genuine 3-dim
+        representations of the little co-group and must decompose into
+        non-negative-integer multiplicities even though they carry no
+        e^(-2πik·t_c) phase under centering translations (unlike χ_mag,
+        whose products with χ_μ are phase-invariant by construction).
+
+        Without the phase_ratio correction in decompose(t_independent=True),
+        FCC-at-L gives -0.5 for both (phase_ratio = mean(e^{2πik·t_c}) = -0.5)."""
+        irreps, rotations, translations, mlg, centerings = lg
+        dims = np.array([irrep[0].shape[0] for irrep in irreps])
+
+        chi_polar = np.array([np.trace(R.astype(float)) for R in rotations])
+        chi_axial = np.array([np.linalg.det(R.astype(float)) * np.trace(R.astype(float))
+                               for R in rotations])
+
+        for chi in (chi_polar, chi_axial):
+            n_mu = irrep_decompose.decompose(
+                irreps, chi, mlg, kpoint=L_POINT, centerings=centerings,
+                t_independent=True)
+            assert np.all(n_mu >= -1e-8), f"negative multiplicity: {n_mu}"
+            for n in n_mu:
+                assert abs(n - round(n)) < 1e-6, f"fractional multiplicity: {n_mu}"
+            assert np.isclose(np.sum(np.round(n_mu) * dims), 3.0)
+
 
 class TestMomentBasisChange:
     """A moment's Cartesian value must be invariant under the child→parent

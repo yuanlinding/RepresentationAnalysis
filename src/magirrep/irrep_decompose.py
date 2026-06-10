@@ -34,7 +34,8 @@ def get_little_group_irreps(it_number: int, kpoint: np.ndarray):
 
 
 def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray,
-              translations: np.ndarray = None, kpoint=None) -> np.ndarray:
+              translations: np.ndarray = None, kpoint=None,
+              centerings=None, t_independent: bool = False) -> np.ndarray:
     """
     Decompose the magnetic representation into irreducible representations.
 
@@ -50,6 +51,14 @@ def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray,
     mag_rep._match_with_centering).  The products χ_μ* χ_mag are therefore
     constant across centering copies and the full-sum average is exact.
 
+    ``t_independent=True`` (use for Γ_polar/Γ_axial, χ(g) = Tr(R) or
+    det(R)Tr(R)): these characters depend only on R, NOT on t, so they do
+    *not* pick up the e^(−2πi k·t_c) phase under g → g·{E|t_c}.  The raw
+    full-sum average above then comes out as ``phase_ratio`` times the true
+    multiplicity, where ``phase_ratio = mean(exp(+2πi k·t_c))`` over the
+    centerings (e.g. −0.5 for FCC at the L point).  Dividing by
+    ``phase_ratio`` recovers the correct non-negative-integer n_μ.
+
     Parameters
     ----------
     irreps :
@@ -61,8 +70,16 @@ def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray,
         ``get_little_group_irreps``).
     mapping_little_group :
         Indices into ``chi_mag`` selecting the little-group operations.
-    translations, kpoint :
+    translations :
         Unused; retained for call-site compatibility.
+    kpoint : array-like, shape (3,), optional
+        Required (together with *centerings*) when ``t_independent=True``.
+    centerings : list[np.ndarray], optional
+        Centering translations from ``little_group.get_centering_translations``.
+        Required (together with *kpoint*) when ``t_independent=True``.
+    t_independent : bool
+        Set True for characters that depend only on the rotation part R
+        (Γ_polar, Γ_axial); see above.
 
     Returns
     -------
@@ -77,9 +94,16 @@ def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray,
     for irrep in irreps:
         chi_irrep = np.array([np.trace(mat) for mat in irrep])
         n = np.sum(chi_lg * np.conj(chi_irrep)) / little_group_order
-        n_mu.append(np.real(n))
+        n_mu.append(n)
+    n_mu = np.array(n_mu)
 
-    return np.array(n_mu)
+    if t_independent and centerings is not None and kpoint is not None and len(centerings) > 1:
+        kpt = np.asarray(kpoint, dtype=float)
+        phase_ratio = np.mean([np.exp(2j * np.pi * np.dot(kpt, ct)) for ct in centerings])
+        if abs(phase_ratio) > 1e-6:
+            n_mu = n_mu / phase_ratio
+
+    return np.real(n_mu)
 
 
 def find_active_irrep(n_mu_array: np.ndarray):

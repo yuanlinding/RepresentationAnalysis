@@ -1616,10 +1616,12 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
         translations=translations, kpoint=kpoint)
     n_mu_axial = irrep_decompose.decompose(
         irreps, chi_axial_sg, mapping_little_group,
-        translations=translations, kpoint=kpoint)
+        translations=translations, kpoint=kpoint,
+        centerings=centerings, t_independent=True)
     n_mu_polar = irrep_decompose.decompose(
         irreps, chi_polar_sg, mapping_little_group,
-        translations=translations, kpoint=kpoint)
+        translations=translations, kpoint=kpoint,
+        centerings=centerings, t_independent=True)
 
     # ── 14. Displacive pass — all atoms (optional) ────────────────────────────────
     n_mu_mech = None
@@ -2037,10 +2039,12 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
         translations=translations, kpoint=kpoint)
     n_mu_axial = irrep_decompose.decompose(
         irreps, chi_axial_sg, mapping_little_group,
-        translations=translations, kpoint=kpoint)
+        translations=translations, kpoint=kpoint,
+        centerings=centerings, t_independent=True)
     n_mu_polar = irrep_decompose.decompose(
         irreps, chi_polar_sg, mapping_little_group,
-        translations=translations, kpoint=kpoint)
+        translations=translations, kpoint=kpoint,
+        centerings=centerings, t_independent=True)
 
     # Per-Wyckoff decompositions (Γ_perm and Γ_mech)
     wyckoff_groups = _get_wyckoff_groups(it_number, parent_positions, atom_labels)
