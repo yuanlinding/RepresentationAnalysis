@@ -10,7 +10,8 @@ import numpy as np
 import spglib
 
 from magirrep import parse_mcif, mag_rep, irrep_decompose, irrep_label, bilbao_match
-from magirrep.little_group import build_reference_crystal, get_hall_number
+from magirrep.little_group import (build_reference_crystal, get_hall_number,
+                                   get_centering_translations)
 
 
 @contextlib.contextmanager
@@ -112,17 +113,8 @@ def _select_primitive_atoms(conv_positions: np.ndarray, it_number: int,
     Tuple of whichever of (positions, magmoms, labels) were non-None, or just
     positions if all extras are None.
     """
-    # Extract centering translations: pure-translation ops (R = Identity) from
-    # the space-group symmetry database, in conventional fractional coordinates.
-    hall_no = get_hall_number(it_number)
-    sg_ops = spglib.get_symmetry_from_database(hall_no)
-    eye3 = np.eye(3, dtype=int)
-    centering: list = []
-    for R, t in zip(sg_ops['rotations'], sg_ops['translations']):
-        if np.allclose(R, eye3, atol=1e-5):
-            ct = t % 1.0
-            if not any(np.allclose(ct, c, atol=1e-5) for c in centering):
-                centering.append(ct)
+    # Centering translations in conventional fractional coordinates.
+    centering = get_centering_translations(it_number)
 
     # Keep one atom per centering orbit.  Atom j is a duplicate of already-kept
     # atom i if  r_j ≡ r_i + ct  (mod Z³)  for some centering vector ct.
@@ -447,15 +439,7 @@ def _get_wyckoff_sites(it_number: int, parent_positions: np.ndarray,
     else:
         numbers = list(np.ones(len(parent_positions), dtype=int))
 
-    # Extract centering translations (pure-translation ops: R = Identity)
-    sg_ops = spglib.get_symmetry_from_database(hall_no)
-    eye3 = np.eye(3, dtype=int)
-    centering = []
-    for R, t in zip(sg_ops['rotations'], sg_ops['translations']):
-        if np.allclose(R, eye3, atol=1e-5):
-            ct = t % 1.0
-            if not any(np.allclose(ct, c, atol=1e-5) for c in centering):
-                centering.append(ct)
+    centering = get_centering_translations(it_number)
 
     # Expand primitive representatives to the full conventional cell
     exp_positions = []
@@ -622,9 +606,15 @@ def _print_wyckoff_and_permutation(it_number, parent_positions, atom_labels,
     dedup   = _dedup_lg_ops(mapping_little_group, rotations)
     n_coset = len(dedup)
 
+    def _fmt_shift(L):
+        """Format a lattice vector; components may be half-integer (centering)."""
+        return "(" + ",".join(_t_frac(v) for v in L) + ")"
+
     # Column widths
     dw = max(3, len(str(N)) + 2)  # destination index column width
-    sw = 12                        # lattice-shift column width
+    sw = max(12, max((len(_fmt_shift(m[1])) + 1
+                      for i_lg, _ in dedup
+                      for m in atom_mappings[i_lg]), default=12))
     op_w = max(20, max(len(_seitz(rotations[idx], translations[idx]))
                        for _, idx in dedup) + 1)
 
@@ -643,7 +633,7 @@ def _print_wyckoff_and_permutation(it_number, parent_positions, atom_labels,
             for m in mappings
         )
         shift_str = "".join(
-            f"({m[1][0]},{m[1][1]},{m[1][2]})".ljust(sw)
+            _fmt_shift(m[1]).ljust(sw)
             for m in mappings
         )
         print(f"  {i+1:>3}  {op_str:<{op_w}}  {dest_str}   {shift_str}")
@@ -1329,8 +1319,17 @@ def _format_sk_constraints(irrep_idx, n_mu, eta, all_basis, atom_labels, parent_
     print()
 
 
+def _print_label_fallback_warning():
+    """Warn that irrep labels were not verified against Bilbao REPRES."""
+    print("  ⚠ NOTE: Bilbao REPRES could not be queried — irrep labels use a")
+    print("    dimension-sorted fallback.  The numbering of same-dimension irreps")
+    print("    (e.g. GM2+ vs GM3+) may differ from the Bilbao convention; verify")
+    print("    labels with REPRES (https://www.cryst.ehu.es) before relying on them.")
+    print()
+
+
 def _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
-                       parities, irreps):
+                       parities, irreps, labels_verified=True):
     """Print validation line comparing identified irrep to stored _irrep_id."""
     expected_id = fields.get('expected_irrep_id')
 
@@ -1347,9 +1346,12 @@ def _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
         co_labels = [_lbl(idx) for idx, *_ in identified if idx in co_set]
         id_str    = "  \u2295  ".join(co_labels) if len(co_labels) > 1 else co_labels[0]
         if expected_id:
-            match = ("  \u2713" if expected_id in co_labels
-                     else f"  \u2717 (identified: {id_str})")
+            is_match = expected_id in co_labels
+            match = "  \u2713" if is_match else f"  \u2717 (identified: {id_str})"
             print(f"  Stored _irrep_id = {expected_id}{match}")
+            if not is_match and not labels_verified:
+                print("  (labels are unverified fallback \u2014 the mismatch may be a labeling"
+                      " artifact, not a physics disagreement)")
         else:
             print(f"  Identified: {id_str}  (no _irrep_id stored in mCIF)")
     else:
@@ -1538,13 +1540,20 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
         print("Spgrep returned no irreps.")
         sys.exit(1)
 
+    # Centering translations: atom matching must be done modulo the PRIMITIVE
+    # lattice, otherwise centered lattices at zone-boundary k lose character
+    # contributions and decompose() returns fractional multiplicities.
+    centerings = get_centering_translations(it_number)
+
     # ── 6. Build D(g) matrices ────────────────────────────────────────────────
     D_matrices_lg = mag_rep.build_mag_rep_matrices(
-        rotations, translations, kpoint, parent_positions, mapping_little_group
+        rotations, translations, kpoint, parent_positions, mapping_little_group,
+        centerings=centerings
     )
 
     # ── 7. Compute magnetic representation characters ─────────────────────────
-    chi_mag = mag_rep.compute_characters(rotations, translations, kpoint, parent_positions)
+    chi_mag = mag_rep.compute_characters(rotations, translations, kpoint, parent_positions,
+                                         centerings=centerings)
 
     if verbose:
         chi_lg = chi_mag[mapping_little_group]
@@ -1556,7 +1565,8 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
 
     # ── 8. Compute permutation representation data ────────────────────────────
     perm_data = mag_rep.compute_permutation_rep(
-        rotations, translations, kpoint, parent_positions, mapping_little_group
+        rotations, translations, kpoint, parent_positions, mapping_little_group,
+        centerings=centerings
     )
 
     # ── 9. Decompose ──────────────────────────────────────────────────────────
@@ -1574,6 +1584,7 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
 
     bilbao_labels = bilbao_match.match_irreps(
         irreps, rotations, translations, mapping_little_group, it_number, kpoint)
+    labels_verified = bilbao_labels is not None
     if bilbao_labels is None:
         bilbao_labels = irrep_label.bilbao_ordered_labels(kpoint, it_number, irreps, parities)
         _dbg(verbose, "Bilbao REPRES unavailable — using dimension-sorted labels")
@@ -1598,7 +1609,7 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
     chi_polar_sg = np.array([
         np.trace(rotations[i].astype(float)) for i in range(len(rotations))])
     chi_perm_mag_sg = mag_rep.compute_perm_characters_all(
-        rotations, translations, kpoint, parent_positions)
+        rotations, translations, kpoint, parent_positions, centerings=centerings)
 
     n_mu_perm_mag = irrep_decompose.decompose(
         irreps, chi_perm_mag_sg, mapping_little_group,
@@ -1636,12 +1647,14 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
         N_all = len(all_par_pos)
 
         D_displacive_lg = mag_rep.build_displacive_rep_matrices(
-            rotations, translations, kpoint, all_par_pos, mapping_little_group)
+            rotations, translations, kpoint, all_par_pos, mapping_little_group,
+            centerings=centerings)
         chi_phon = mag_rep.compute_displacive_characters(
-            rotations, translations, kpoint, all_par_pos)
+            rotations, translations, kpoint, all_par_pos, centerings=centerings)
 
         perm_data_all_raw = mag_rep.compute_permutation_rep(
-            rotations, translations, kpoint, all_par_pos, mapping_little_group)
+            rotations, translations, kpoint, all_par_pos, mapping_little_group,
+            centerings=centerings)
         atom_mappings_all, chi_perm_all_lg, _ = perm_data_all_raw
         chi_axial_phon_all = np.array([
             np.trace(rotations[idx].astype(float)) for idx in mapping_little_group])
@@ -1664,7 +1677,7 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
 
         # ── 14. Γ_perm[all] decomposition (unique to displacive pass) ────────────
         chi_perm_all_sg = mag_rep.compute_perm_characters_all(
-            rotations, translations, kpoint, all_par_pos)
+            rotations, translations, kpoint, all_par_pos, centerings=centerings)
         n_mu_perm_all = irrep_decompose.decompose(
             irreps, chi_perm_all_sg, mapping_little_group,
             translations=translations, kpoint=kpoint)
@@ -1672,13 +1685,23 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
         # Per-Wyckoff displacive decompositions
         for group_name, indices in _get_wyckoff_groups(it_number, all_par_pos, all_labels):
             chi_wyck = mag_rep.compute_displacive_characters(
-                rotations, translations, kpoint, all_par_pos[indices])
+                rotations, translations, kpoint, all_par_pos[indices],
+                centerings=centerings)
             n_mu_wyck = irrep_decompose.decompose(
                 irreps, chi_wyck, mapping_little_group,
                 translations=translations, kpoint=kpoint)
             wyckoff_mech_decomps.append((group_name, n_mu_wyck))
 
     n_mu_mag = n_mu_array   # alias for clarity in _print_decomposition_extended
+
+    # Parent-cell lattice for Cartesian moment display.  The structure lattice
+    # is the CHILD (magnetic) cell; parent-cell fractional moments must be
+    # converted with the parent lattice:  A_child = child_M @ A_p,
+    # A_p = parent_M @ A_std  ⇒  A_std = parent_M⁻¹ child_M⁻¹ A_child.
+    try:
+        lat_parent = np.linalg.solve(parent_M, np.linalg.solve(child_M, lat_M))
+    except np.linalg.LinAlgError:
+        lat_parent = lat_M
 
     # ── 15. Print full Bertaut-style report ───────────────────────────────────
     _cm = _tee_stdout(output_file) if output_file else contextlib.nullcontext()
@@ -1697,6 +1720,8 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
                                mapping_little_group, kpoint, it_number,
                                active_irreps=active_irreps,
                                bilbao_labels=bilbao_labels)
+        if not labels_verified:
+            _print_label_fallback_warning()
         _print_decomposition_extended(
             n_mu_mag, n_mu_perm_mag,
             n_mu_mech, n_mu_perm_all,
@@ -1718,9 +1743,9 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
         _print_moment_consistency(active_irreps, all_basis, parent_magmoms,
                                    atom_labels, parent_positions, identified,
                                    bilbao_labels, kpoint, it_number, parities, irreps,
-                                   lat_M=lat_M)
+                                   lat_M=lat_parent)
         _print_validation(fields, identified, bilbao_labels, kpoint, it_number,
-                          parities, irreps)
+                          parities, irreps, labels_verified=labels_verified)
         if displacive_pass:
             print(f"  Σ n_μ·d_μ (mech) = {dim_check_mech:.3f}  "
                   f"(expected 3×N_all = {3*N_all})")
@@ -1919,16 +1944,20 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
         print("Spgrep returned no irreps.")
         import sys; sys.exit(1)
 
+    # Atom matching modulo the PRIMITIVE lattice (see run_analysis).
+    centerings = get_centering_translations(it_number)
+
     # ── 6. Build D(g) matrices (displacive/polar-vector version) ────────────────
     D_matrices_lg = mag_rep.build_displacive_rep_matrices(
-        rotations, translations, kpoint, parent_positions, mapping_little_group
+        rotations, translations, kpoint, parent_positions, mapping_little_group,
+        centerings=centerings
     )
 
     # ── 7. Compute χ_disp (no det factor) ────────────────────────────────────
     # compute_displacive_characters takes the full rotations/translations arrays
     # and returns chi for ALL ops (indexed by all op index, not lg index).
     chi_disp = mag_rep.compute_displacive_characters(
-        rotations, translations, kpoint, parent_positions
+        rotations, translations, kpoint, parent_positions, centerings=centerings
     )
 
     if verbose:
@@ -1942,7 +1971,8 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
     # For displacive mode chi_axial = Tr(R). compute_permutation_rep returns
     # chi_axial = det(R)·Tr(R), so we override it for display.
     perm_data_raw = mag_rep.compute_permutation_rep(
-        rotations, translations, kpoint, parent_positions, mapping_little_group
+        rotations, translations, kpoint, parent_positions, mapping_little_group,
+        centerings=centerings
     )
     atom_mappings, chi_perm, _chi_axial_mag = perm_data_raw
 
@@ -1971,6 +2001,7 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
 
     bilbao_labels = bilbao_match.match_irreps(
         irreps, rotations, translations, mapping_little_group, it_number, kpoint)
+    labels_verified = bilbao_labels is not None
     if bilbao_labels is None:
         bilbao_labels = irrep_label.bilbao_ordered_labels(
             kpoint, it_number, irreps, parities, magnetic=False)
@@ -1994,7 +2025,7 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
 
     # ── 12b. Γ_perm, Γ_axial, Γ_polar decompositions (displacive mode) ───────────
     chi_perm_all_sg = mag_rep.compute_perm_characters_all(
-        rotations, translations, kpoint, parent_positions)
+        rotations, translations, kpoint, parent_positions, centerings=centerings)
     chi_axial_sg = np.array([
         np.linalg.det(rotations[i].astype(float)) * np.trace(rotations[i].astype(float))
         for i in range(len(rotations))])
@@ -2017,14 +2048,16 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
     wyckoff_mech_decomps = []
     for group_name, indices in wyckoff_groups:
         chi_perm_wyck = mag_rep.compute_perm_characters_all(
-            rotations, translations, kpoint, parent_positions[indices])
+            rotations, translations, kpoint, parent_positions[indices],
+            centerings=centerings)
         n_mu_perm_wyck = irrep_decompose.decompose(
             irreps, chi_perm_wyck, mapping_little_group,
             translations=translations, kpoint=kpoint)
         wyckoff_perm_decomps.append((group_name, n_mu_perm_wyck))
 
         chi_wyck = mag_rep.compute_displacive_characters(
-            rotations, translations, kpoint, parent_positions[indices])
+            rotations, translations, kpoint, parent_positions[indices],
+            centerings=centerings)
         n_mu_wyck = irrep_decompose.decompose(
             irreps, chi_wyck, mapping_little_group,
             translations=translations, kpoint=kpoint)
@@ -2051,6 +2084,8 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
                                mapping_little_group, kpoint, it_number,
                                bilbao_labels=bilbao_labels,
                                mode='displacive')
+        if not labels_verified:
+            _print_label_fallback_warning()
         _print_decomposition_extended(
             None, None,
             n_mu_mech, n_mu_perm_all,

@@ -32,6 +32,27 @@ def get_hall_number(it_number: int) -> int:
     return _HALL_NUMBER_CACHE[it_number]
 
 
+def get_centering_translations(it_number: int) -> list:
+    """Return the centering translations of *it_number* in conventional fractional
+    coordinates, always including (0,0,0).
+
+    These are the pure-translation operations {E|t_c} of the conventional-cell
+    space group, i.e. the primitive-lattice vectors that are non-integer in the
+    conventional basis (e.g. (½,½,0), (½,0,½), (0,½,½) for F-centering).
+    For P-type lattices the list is just [(0,0,0)].
+    """
+    hall_no = get_hall_number(it_number)
+    sg_ops = spglib.get_symmetry_from_database(hall_no)
+    eye3 = np.eye(3, dtype=int)
+    centering = [np.zeros(3)]
+    for R, t in zip(sg_ops['rotations'], sg_ops['translations']):
+        if np.allclose(R, eye3, atol=1e-5):
+            ct = t % 1.0
+            if not any(np.allclose(ct, c, atol=1e-5) for c in centering):
+                centering.append(ct)
+    return centering
+
+
 def _lattice_for_crystal_system(it_number: int) -> np.ndarray:
     """Return a generic unit lattice compatible with the crystal system of *it_number*."""
     if it_number <= 2:       # Triclinic

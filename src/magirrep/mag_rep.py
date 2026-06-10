@@ -1,5 +1,30 @@
 import numpy as np
 
+_NO_CENTERING = (np.zeros(3),)
+
+
+def _match_with_centering(diff, centerings, tol=1e-4):
+    """Match an atom-mapping difference vector modulo the PRIMITIVE lattice.
+
+    *diff* = R@r_src + t − r_dst in conventional fractional coordinates.
+    For centered Bravais lattices the primitive lattice contains non-integer
+    conventional vectors (the centering translations), so after reduction to
+    one atom per centering orbit a symmetry op may map an atom onto the
+    removed centering copy of another.  Matching only modulo Z³ then fails
+    and the character silently loses that contribution — which breaks the
+    small-representation phase relation χ({R|t+t_c}) = e^(−2πik·t_c) χ({R|t})
+    and produces fractional multiplicities in decompose().
+
+    Returns the true primitive-lattice vector L (possibly half-integer in
+    conventional coordinates) or None if no match.
+    """
+    for ct in centerings:
+        d2 = diff - ct
+        if np.allclose(d2 - np.round(d2), 0, atol=tol):
+            return np.round(d2) + ct
+    return None
+
+
 def map_atoms_to_parent_cell(positions, magmoms, child_transform_M, child_transform_t, parent_transform_M, parent_transform_t):
     """
     Transforms magnetic-cell fractional coordinates and magnetic moments to the 
@@ -46,13 +71,13 @@ def map_atoms_to_parent_cell(positions, magmoms, child_transform_M, child_transf
         r_std = r_std_raw % 1.0
         L_wrap = np.round(r_std_raw - r_std).astype(int)
 
-        # Moment vectors (crystal-axis fractional) transform the same way as positions
-        # (pure basis change, no det factor).  sign(det) = +1 for all valid transforms.
-        P1 = child_transform_M
-        m_p = np.sign(np.linalg.det(P1)) * P1.T @ m
-
-        P2 = parent_transform_M
-        m_std = np.sign(np.linalg.det(P2)) * P2.T @ m_p
+        # Moment vectors in fractional components transform exactly like
+        # coordinates under a pure basis change (m_cart = A.T @ m_frac is
+        # invariant, A_child = M @ A_parent  ⇒  m_frac_parent = M.T @ m_frac_child).
+        # No det factor: that applies to physical symmetry operations on axial
+        # vectors, not to relabelling the basis.
+        m_p = child_transform_M.T @ m
+        m_std = parent_transform_M.T @ m_p
 
         parent_positions.append(r_std)
         parent_magmoms.append(m_std)
@@ -61,7 +86,7 @@ def map_atoms_to_parent_cell(positions, magmoms, child_transform_M, child_transf
     return np.array(parent_positions), np.array(parent_magmoms), np.array(wrap_offsets)
 
 def build_mag_rep_matrices(rotations, translations, kpoint, parent_positions,
-                            mapping_little_group, tol=1e-4):
+                            mapping_little_group, tol=1e-4, centerings=None):
     """
     Build the full 3N×3N D(g) matrices of the magnetic representation for each
     little-group operation.
@@ -91,6 +116,8 @@ def build_mag_rep_matrices(rotations, translations, kpoint, parent_positions,
     """
     N = len(parent_positions)
     kpoint = np.asarray(kpoint, dtype=float)
+    if centerings is None:
+        centerings = _NO_CENTERING
     D_matrices = []
 
     for idx in mapping_little_group:
@@ -102,9 +129,8 @@ def build_mag_rep_matrices(rotations, translations, kpoint, parent_positions,
         for src, r_src in enumerate(parent_positions):
             r_transformed = R @ r_src + t
             for dst, r_dst in enumerate(parent_positions):
-                diff = r_transformed - r_dst
-                if np.allclose(diff - np.round(diff), 0, atol=tol):
-                    L = np.round(diff)
+                L = _match_with_centering(r_transformed - r_dst, centerings, tol)
+                if L is not None:
                     phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
                     D[3*dst:3*dst+3, 3*src:3*src+3] = det_R * R * phase
                     break  # each src maps to exactly one dst
@@ -115,7 +141,8 @@ def build_mag_rep_matrices(rotations, translations, kpoint, parent_positions,
 
 
 def compute_permutation_rep(rotations, translations, kpoint,
-                             parent_positions, mapping_little_group, tol=1e-4):
+                             parent_positions, mapping_little_group, tol=1e-4,
+                             centerings=None):
     """
     For each little-group operation compute the permutation representation data.
 
@@ -139,6 +166,8 @@ def compute_permutation_rep(rotations, translations, kpoint,
     """
     N = len(parent_positions)
     kpoint = np.asarray(kpoint, dtype=float)
+    if centerings is None:
+        centerings = _NO_CENTERING
 
     atom_mappings = []
     chi_perm  = np.zeros(len(mapping_little_group), dtype=complex)
@@ -158,16 +187,15 @@ def compute_permutation_rep(rotations, translations, kpoint,
             r_transformed = R @ r_src + t
             found = False
             for dst, r_dst in enumerate(parent_positions):
-                diff = r_transformed - r_dst
-                if np.allclose(diff - np.round(diff), 0, atol=tol):
-                    L_vec = np.round(diff).astype(int)
+                L_vec = _match_with_centering(r_transformed - r_dst, centerings, tol)
+                if L_vec is not None:
                     mappings_this_op.append((dst, L_vec))
                     if src == dst:
                         chi_p += np.exp(-2j * np.pi * np.dot(kpoint, L_vec))
                     found = True
                     break
             if not found:
-                mappings_this_op.append((-1, np.zeros(3, dtype=int)))
+                mappings_this_op.append((-1, np.zeros(3)))
 
         atom_mappings.append(mappings_this_op)
         chi_perm[i_lg] = chi_p
@@ -175,7 +203,8 @@ def compute_permutation_rep(rotations, translations, kpoint,
     return atom_mappings, chi_perm, chi_axial
 
 
-def compute_displacive_characters(R_lk, t_lk, kpoint, positions, tol=1e-4):
+def compute_displacive_characters(R_lk, t_lk, kpoint, positions, tol=1e-4,
+                                  centerings=None):
     """
     Computes the character of the mechanical (displacement) representation for each
     operation in the little group.
@@ -196,18 +225,17 @@ def compute_displacive_characters(R_lk, t_lk, kpoint, positions, tol=1e-4):
     chi_disp : np.ndarray, shape (|G_k|,), complex
     """
     chi_disp = np.zeros(len(R_lk), dtype=complex)
+    if centerings is None:
+        centerings = _NO_CENTERING
 
     for i, (R, t) in enumerate(zip(R_lk, t_lk)):
         chi_axial = np.trace(R)   # polar vector: no det(R) factor
 
         trace_perm = 0.0 + 0.0j
         for r in positions:
-            r_transformed = R @ r + t
-            diff = r_transformed - r
-            if np.allclose(diff - np.round(diff), 0, atol=tol):
-                L = np.round(diff)
-                atom_phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
-                trace_perm += atom_phase
+            L = _match_with_centering(R @ r + t - r, centerings, tol)
+            if L is not None:
+                trace_perm += np.exp(-2j * np.pi * np.dot(kpoint, L))
 
         chi_disp[i] = chi_axial * trace_perm
 
@@ -215,7 +243,7 @@ def compute_displacive_characters(R_lk, t_lk, kpoint, positions, tol=1e-4):
 
 
 def build_displacive_rep_matrices(rotations, translations, kpoint, parent_positions,
-                               mapping_little_group, tol=1e-4):
+                               mapping_little_group, tol=1e-4, centerings=None):
     """
     Build the full 3N×3N D(g) matrices of the mechanical (displacement) representation
     for each little-group operation.
@@ -242,6 +270,8 @@ def build_displacive_rep_matrices(rotations, translations, kpoint, parent_positi
     """
     N = len(parent_positions)
     kpoint = np.asarray(kpoint, dtype=float)
+    if centerings is None:
+        centerings = _NO_CENTERING
     D_matrices = []
 
     for idx in mapping_little_group:
@@ -252,9 +282,8 @@ def build_displacive_rep_matrices(rotations, translations, kpoint, parent_positi
         for src, r_src in enumerate(parent_positions):
             r_transformed = R @ r_src + t
             for dst, r_dst in enumerate(parent_positions):
-                diff = r_transformed - r_dst
-                if np.allclose(diff - np.round(diff), 0, atol=tol):
-                    L = np.round(diff)
+                L = _match_with_centering(r_transformed - r_dst, centerings, tol)
+                if L is not None:
                     phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
                     D[3*dst:3*dst+3, 3*src:3*src+3] = R * phase   # no det_R
                     break
@@ -264,22 +293,25 @@ def build_displacive_rep_matrices(rotations, translations, kpoint, parent_positi
     return D_matrices
 
 
-def compute_perm_characters_all(rotations, translations, kpoint, positions, tol=1e-4):
+def compute_perm_characters_all(rotations, translations, kpoint, positions, tol=1e-4,
+                                centerings=None):
     """Return chi_perm indexed over ALL space-group ops (needed for decompose()).
 
     chi_perm[i] = Σ_{fixed atoms} exp(−2πi k·L_j)  for op i.
     """
     chi = np.zeros(len(rotations), dtype=complex)
     kpt = np.asarray(kpoint, dtype=float)
+    if centerings is None:
+        centerings = _NO_CENTERING
     for i, (R, t) in enumerate(zip(rotations, translations)):
         for r in positions:
-            diff = R @ r + t - r
-            if np.allclose(diff - np.round(diff), 0, atol=tol):
-                chi[i] += np.exp(-2j * np.pi * np.dot(kpt, np.round(diff)))
+            L = _match_with_centering(R @ r + t - r, centerings, tol)
+            if L is not None:
+                chi[i] += np.exp(-2j * np.pi * np.dot(kpt, L))
     return chi
 
 
-def compute_characters(R_lk, t_lk, kpoint, mag_positions, tol=1e-4):
+def compute_characters(R_lk, t_lk, kpoint, mag_positions, tol=1e-4, centerings=None):
     """
     Computes the character of the magnetic representation for each operation in the little group.
     
@@ -292,38 +324,22 @@ def compute_characters(R_lk, t_lk, kpoint, mag_positions, tol=1e-4):
     chi_mag: Array of length |G_k| containing the character for each operation.
     """
     chi_mag = np.zeros(len(R_lk), dtype=complex)
-    
+    if centerings is None:
+        centerings = _NO_CENTERING
+
     for i, (R, t) in enumerate(zip(R_lk, t_lk)):
-        # We sum the phase for each invariant atom. 
-        # The phase is ONLY exp(-2 pi i k . L).
-        
-        # 2. Axial vector character: det(R) * Tr(R)
-        # Note: Tr(R) is the trace of the 3x3 rotation matrix in real space.
+        # Axial vector character: det(R) * Tr(R)
         chi_axial = np.linalg.det(R) * np.trace(R)
-        
-        # 3. Number of fixed atoms modulo lattice translations with phase shift
-        # Fixed point condition: r_j = R r_i + t (mod lattice)
-        # However, for an orbit, it's Tr(permutation matrix). 
-        # A magnetic site r_i contributes if R r_i + t = r_i (mod 1).
-        # Wait, if there are multiple magnetic atoms in the primitive cell (or conventional cell),
-        # we sum over all of them.
-        
+
+        # Permutation character: a magnetic site contributes exp(-2πi k·L)
+        # when R r + t ≡ r modulo the PRIMITIVE lattice (L may be a centering
+        # vector for centered Bravais lattices).
         trace_perm = 0.0 + 0.0j
         for r in mag_positions:
-            r_transformed = R @ r + t
-            diff = r_transformed - r
-            
-            # Check if diff is integer
-            if np.allclose(diff - np.round(diff), 0, atol=tol):
-                # The atom maps to itself up to a lattice translation L = r_transformed - r
-                L = np.round(diff)
-                # The phase factor associated with this lattice translation is e^{-i k . L}
-                # Wait, if r_j = R r_i + t - L, then L = R r_i + t - r_i.
-                # In Bertaut's method, the full phase is e^{-i k . L}.
-                # Actually, the base function transforms as T_L \phi_k = e^{-i k . L} \phi_k
-                atom_phase = np.exp(-2j * np.pi * np.dot(kpoint, L))
-                trace_perm += atom_phase
-                
+            L = _match_with_centering(R @ r + t - r, centerings, tol)
+            if L is not None:
+                trace_perm += np.exp(-2j * np.pi * np.dot(kpoint, L))
+
         chi_mag[i] = chi_axial * trace_perm
-        
+
     return chi_mag

@@ -38,15 +38,17 @@ def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray,
     """
     Decompose the magnetic representation into irreducible representations.
 
-    n_μ = (1/|G_small|) Σ_{g ∈ G_small} χ_μ*(g) χ_mag(g)
+    n_μ = (1/|G_k|) Σ_{g ∈ G_k} χ_μ*(g) χ_mag(g)
 
-    For centered Bravais lattices at zone-boundary k-points (e.g. FCC at k=L),
-    the body-centering translations produce a non-trivial phase system
-    exp(−2πi k·t) ≠ 1.  In that case the returned irreps are small irreps of
-    the *quotient* group G_k/T (the "small group of k"), not ordinary irreps of
-    the full 48-op little group.  The correct normalization then uses only the
-    "small group" operations (those with integer conventional-cell translations,
-    for which exp(−2πi k·t) = 1) and divides by their count.
+    The sum runs over ALL listed little-group operations.  For centered
+    Bravais lattices the conventional-cell op list contains each coset of the
+    primitive translation group n_c times (once per centering translation
+    t_c), and at zone-boundary k both χ_μ and χ_mag pick up the same phase
+    exp(−2πi k·t_c) under g → g·{E|t_c} — spgrep small representations
+    satisfy this by construction, and the physical characters do too provided
+    atom matching is done modulo the PRIMITIVE lattice (see
+    mag_rep._match_with_centering).  The products χ_μ* χ_mag are therefore
+    constant across centering copies and the full-sum average is exact.
 
     Parameters
     ----------
@@ -59,46 +61,16 @@ def decompose(irreps, chi_mag: np.ndarray, mapping_little_group: np.ndarray,
         ``get_little_group_irreps``).
     mapping_little_group :
         Indices into ``chi_mag`` selecting the little-group operations.
-    translations : np.ndarray, shape (N_ops, 3), optional
-        Space-group translations (same indexing as mapping_little_group).
-        When provided together with *kpoint*, enables the small-group filter.
-    kpoint : array-like, shape (3,), optional
-        Propagation vector in fractional reciprocal coordinates.
+    translations, kpoint :
+        Unused; retained for call-site compatibility.
 
     Returns
     -------
     n_mu : np.ndarray
-        Multiplicities (non-negative integers for a valid magnetic
-        representation).
+        Multiplicities (non-negative integers for a valid representation;
+        non-integer output indicates inconsistent input characters).
     """
-    # Determine effective summation domain and normalization.
-    # At zone-boundary k for centered Bravais lattices the body-centering
-    # coset translations give exp(-2πi k·t) ≠ 1, so we restrict to the
-    # "small group" (ops with integer conventional-cell translation).
-    if translations is not None and kpoint is not None:
-        kpt = np.asarray(kpoint, dtype=float)
-        phases = np.array([
-            np.exp(-2j * np.pi * np.dot(kpt, translations[idx]))
-            for idx in mapping_little_group
-        ])
-        if not np.allclose(phases, 1.0, atol=1e-4):
-            # Keep only ops whose translation is a conventional lattice vector
-            small_mask = np.array([
-                np.allclose(translations[idx] % 1.0, 0.0, atol=1e-4)
-                for idx in mapping_little_group
-            ])
-            small_indices = np.where(small_mask)[0]
-            chi_lg = chi_mag[mapping_little_group[small_indices]]
-            n_mu = []
-            for irrep in irreps:
-                chi_irrep = np.array([np.trace(mat) for mat in irrep])
-                chi_irrep_small = chi_irrep[small_indices]
-                n = np.sum(chi_lg * np.conj(chi_irrep_small)) / len(small_indices)
-                n_mu.append(np.real(n))
-            return np.array(n_mu)
-
-    # Standard formula (Gamma-point, primitive-lattice SGs, or no translations given)
-    chi_lg = chi_mag[mapping_little_group]
+    chi_lg = chi_mag[np.asarray(mapping_little_group)]
     little_group_order = len(mapping_little_group)
 
     n_mu = []
