@@ -9,7 +9,7 @@ RUN apt-get update \
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    "git+https://github.com/yuanlinding/RepresentationAnalysis@43fa156a7d379e407ae500f80d5faee78c04bcdb"
+    "git+https://github.com/yuanlinding/RepresentationAnalysis@f5d83f70d9e8f3cacb2fda233bb49da1b89825a9"
 
 COPY app.py .
 
