@@ -38,19 +38,24 @@ def parse_mcif_fields(path: str) -> dict:
                     pass
                 break
 
-    # k-vector (assuming single k-vector for now)
+    # k-vectors: parse ALL rows of the _parent_propagation_vector loop, not
+    # just the first.  Bracketed values like "[1/2 1/2 1/2]" trip up gemmi's
+    # CIF tokenizer, so extract them with a regex anchored to the lines
+    # immediately following the kxkykz tag (loop rows are consecutive).
     import re
-    # Try to find the exact brackets for k-vector which avoids CIF parsing truncation
-    k_match = re.search(r'_parent_propagation_vector\.kxkykz\s*(.*?)\n(.*?)\[\s*(.*?)\s*\]', content, flags=re.MULTILINE|re.DOTALL)
-    if k_match:
-        # Check if the match is close to the tag
-        dist = len(k_match.group(1)) + len(k_match.group(2))
-        if dist < 100:
-            fields['kvector_str'] = k_match.group(3) # just the inside, e.g. "0 0 0"
-        else:
-            fields['kvector_str'] = "0 0 0"
-    else:
-        fields['kvector_str'] = "0 0 0"
+    kvec_strs = []
+    k_tag = re.search(r'_parent_propagation_vector\.kxkykz[^\n]*\n', content)
+    if k_tag:
+        for line in content[k_tag.end():].splitlines():
+            m = re.match(r'\s*\S+\s+\[\s*([^\]\n]*?)\s*\]\s*$', line)
+            if m:
+                kvec_strs.append(m.group(1))
+            else:
+                break  # first non-k-row line ends the loop
+    if not kvec_strs:
+        kvec_strs = ["0 0 0"]
+    fields['kvector_strs'] = kvec_strs
+    fields['kvector_str'] = kvec_strs[0]
 
     # child transform Pp_abc — primary source: _parent_space_group.child_transform_Pp_abc
     child_transform = block.find_value('_parent_space_group.child_transform_pp_abc')

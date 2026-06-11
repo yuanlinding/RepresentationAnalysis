@@ -53,6 +53,20 @@ def _dbg_atoms(verbose, label, positions, magmoms):
               f"   m = [{m[0]:7.4f}, {m[1]:7.4f}, {m[2]:7.4f}]  |m| = {np.linalg.norm(m):.4f}")
 
 
+def _reject_multi_k(fields: dict):
+    """Raise ValueError for multi-k mCIFs (analysis assumes a single k).
+
+    Duplicate rows that parse to the same vector still count as single-k.
+    """
+    kvec_strs = fields.get('kvector_strs', [fields['kvector_str']])
+    distinct = {tuple(np.round(parse_mcif.parse_kvector(s), 6)) for s in kvec_strs}
+    if len(distinct) > 1:
+        raise ValueError(
+            f"Multi-k magnetic structure: propagation vectors {kvec_strs} found "
+            "in the mCIF. Representation analysis here assumes a single k; "
+            "analyse each k-arm separately.")
+
+
 def _deduplicate_positions(positions: np.ndarray, magmoms: np.ndarray = None,
                             offsets: np.ndarray = None, labels: list = None,
                             tol: float = 1e-4):
@@ -1369,6 +1383,7 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
 
     # ── 1. Parse fields ───────────────────────────────────────────────────────
     fields = parse_mcif.parse_mcif_fields(mcif_path)
+    _reject_multi_k(fields)
     kpoint = parse_mcif.parse_kvector(fields['kvector_str'])
 
     child_M, child_t = parse_mcif.parse_transform(fields['child_transform_str'])
@@ -1866,6 +1881,7 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
         is_mcif = False
 
     if is_mcif:
+        _reject_multi_k(fields)
         kpoint    = parse_mcif.parse_kvector(fields['kvector_str'])
         it_number = fields.get('it_number')
         child_M, child_t = parse_mcif.parse_transform(fields['child_transform_str'])

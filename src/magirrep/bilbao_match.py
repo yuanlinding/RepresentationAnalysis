@@ -351,37 +351,53 @@ def match_irreps(irreps, rotations, translations, mapping_little_group,
     # ── Build op_map: bilbao_op_idx → little_group_position ───────────────────
     have_R = all(op.get('R') is not None for op in b_ops)
 
-    op_map: dict = {}   # bi → si  (little-group position index)
-    used_si: set  = set()
+    def _t_match(t_b, sg_idx):
+        diff = (t_b - translations[sg_idx]) % 1.0
+        diff = np.minimum(diff, 1.0 - diff)
+        return np.max(diff) < 1e-4
 
-    for bi, bop in enumerate(b_ops):
-        t_b = np.array(bop['t'], dtype=float)
-        for si, sg_idx in enumerate(mapping_little_group):
-            if si in used_si:
-                continue
-            t_s = translations[sg_idx]
-            # Translation match (mod lattice)
-            diff = (t_b - t_s) % 1.0
-            diff = np.minimum(diff, 1.0 - diff)
-            t_ok = np.max(diff) < 1e-4
-            # Rotation match (if available)
-            if have_R:
-                R_b = np.array(bop['R'], dtype=int)
-                R_s = rotations[sg_idx].astype(int)
-                r_ok = np.array_equal(R_b, R_s)
-            else:
-                r_ok = True
-            if t_ok and r_ok:
-                op_map[bi] = si
-                used_si.add(si)
-                break
+    op_map: dict = {}   # bi → si  (little-group position index)
+
+    if have_R:
+        # (R, t) identifies an op uniquely — first match is the only match
+        used_si: set = set()
+        for bi, bop in enumerate(b_ops):
+            t_b = np.array(bop['t'], dtype=float)
+            R_b = np.array(bop['R'], dtype=int)
+            for si, sg_idx in enumerate(mapping_little_group):
+                if si in used_si:
+                    continue
+                if _t_match(t_b, sg_idx) and np.array_equal(R_b, rotations[sg_idx].astype(int)):
+                    op_map[bi] = si
+                    used_si.add(si)
+                    break
+    else:
+        # Translation-only fallback: a pairing is reliable only when the
+        # translation identifies exactly one op on BOTH sides.  Ops sharing
+        # a translation (e.g. all coset reps of a symmorphic group have t=0)
+        # cannot be told apart and must stay unmatched — greedy first-match
+        # here cross-pairs ops and scrambles the assembled characters.
+        cand = []           # cand[bi] = [si, ...] with matching translation
+        claims = {}         # si → number of bilbao ops matching it
+        for bop in b_ops:
+            t_b = np.array(bop['t'], dtype=float)
+            sis = [si for si, sg_idx in enumerate(mapping_little_group)
+                   if _t_match(t_b, sg_idx)]
+            cand.append(sis)
+            for si in sis:
+                claims[si] = claims.get(si, 0) + 1
+        for bi, sis in enumerate(cand):
+            if len(sis) == 1 and claims[sis[0]] == 1:
+                op_map[bi] = sis[0]
 
     if len(op_map) < int(N * 0.8):
-        return None   # too few ops aligned
+        return None   # too few ops aligned unambiguously
 
     # ── Match each spgrep irrep to its Bilbao counterpart ─────────────────────
     result: dict = {}
     used_b: set  = set()
+
+    mapped_si = np.array(sorted(op_map.values()), dtype=int)
 
     for alpha, irrep in enumerate(irreps):
         chi_S = np.array([np.trace(irrep[i]) for i in range(N)])
@@ -396,7 +412,11 @@ def match_irreps(irreps, rotations, translations, mapping_little_group,
             for bi, si in op_map.items():
                 if bi < len(birr['chars']):
                     chi_B[si] = birr['chars'][bi]
-            score = abs(np.dot(chi_B.conj(), chi_S)) / N
+            # Cosine similarity over the unambiguously mapped ops only, so a
+            # partial op_map does not deflate the score of a correct match.
+            num = abs(np.dot(chi_B[mapped_si].conj(), chi_S[mapped_si]))
+            den = (np.linalg.norm(chi_B[mapped_si]) * np.linalg.norm(chi_S[mapped_si]))
+            score = num / den if den > 1e-12 else 0.0
             if score > best_score:
                 best_score = score
                 best_b = b_idx
