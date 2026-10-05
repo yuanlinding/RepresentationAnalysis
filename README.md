@@ -7,7 +7,7 @@
 Bertaut representational analysis for magnetic structures. Given an mCIF file from
 [Bilbao MAGNDATA](https://www.cryst.ehu.es/magndata/) or a hand-crafted mCIF, determine
 which magnetic irreducible representation(s) drive the paramagnetic-to-magnetically-ordered
-phase transition. Also computes the phonon/mechanical representation for any CIF file.
+phase transition. Also computes the displacive (phonon/mechanical) representation for any CIF file.
 
 Supports both MAGNDATA-style mCIF files and plain/hand-crafted mCIF files that use older
 CIF conventions (`_symmetry_Int_Tables_number`, `_atom_site_moment_crystalaxis_x`).
@@ -38,25 +38,18 @@ automatically from PyPI.
 ### Magnetic analysis (default)
 
 ```bash
-magirrep file.mcif                   # combined magnetic + phonon report
+magirrep file.mcif                   # combined magnetic + displacive report
 magirrep file.mcif --magnetic        # magnetic representation only (faster)
 magirrep file.mcif -v                # verbose debug output at each pipeline stage
 magirrep file.mcif --output          # auto-save to {stem}_magirrep.txt (also prints to terminal)
 magirrep file.mcif -o result.txt     # save to named file
 ```
 
-### Phonon / mechanical representation
+### Displacive (phonon / mechanical) representation
 
 ```bash
-magirrep file.mcif  --phonon                        # phonon-only from mCIF
-magirrep file.cif   --phonon --kvector 0,1/2,0      # phonon from plain CIF with explicit k
-```
-
-### Displacive representational analysis
-
-```bash
-magirrep file.mcif --displacive                     # displacive modes (all atoms)
-magirrep file.mcif --displacive --kvector 0,1/2,0   # with explicit k-vector
+magirrep file.mcif --displacive                     # displacive modes (all atoms) from mCIF
+magirrep file.cif  --displacive --kvector 0,1/2,0   # plain CIF with explicit k-vector
 ```
 
 ### Generate distorted structures
@@ -79,10 +72,9 @@ positional arguments:
 optional arguments:
   -h, --help             show this help message and exit
   -v, --verbose          Print debug details at each pipeline stage
-  --phonon               Phonon/mechanical representation only (all atoms, no det factor)
-  --magnetic             Magnetic representation only (skip phonon pass; faster)
-  --displacive           Displacive representational analysis (all atoms, phonon convention)
-  --kvector KX,KY,KZ     Propagation vector (for --phonon or --displacive on plain CIF),
+  --displacive           Displacive/mechanical representation only (all atoms, no det factor)
+  --magnetic             Magnetic representation only (skip displacive pass; faster)
+  --kvector KX,KY,KZ     Propagation vector for --displacive on a plain CIF,
                          e.g. '0,1/2,0'  (default: 0,0,0)
   --distort [AMP]        Generate distorted CIF/mCIF files after --displacive analysis.
                          AMP is the displacement amplitude in Angstroms (default: 0.1).
@@ -94,7 +86,7 @@ optional arguments:
                          {input_stem}_magirrep.txt. Output is also printed to the terminal.
 ```
 
-`--phonon`, `--magnetic`, and `--displacive` are mutually exclusive.
+`--magnetic` and `--displacive` are mutually exclusive.
 
 ## Output
 
@@ -108,9 +100,9 @@ The combined report contains 10 sections followed by a validation block:
 | (6) | Representation characters — χ_perm, det(R), Tr(R), χ_axial, χ_mag per G_k operation |
 | (7) | Irrep character table of G_k (Bilbao-style labels, conjugacy classes, active irreps marked) |
 | (8) | **Decomposition** — building-block reps and combined summary table |
-| (9) | Basis vectors — symmetry-adapted modes for magnetic atoms and for all atoms (phonon) |
+| (9) | Basis vectors — symmetry-adapted modes for magnetic atoms and for all atoms (displacive) |
 | (10) | Moment–irrep consistency — actual moments projected onto active irrep subspace |
 
-`--phonon` mode omits the magnetic block; `--magnetic` mode omits the phonon block.
+`--displacive` mode omits the magnetic block; `--magnetic` mode omits the displacive block.
 
 For the mathematical background see [`docs/theory.md`](docs/theory.md).
