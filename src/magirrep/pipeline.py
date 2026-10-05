@@ -1451,6 +1451,13 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
     lat_M     = structure.lattice.matrix
     lat_norms = np.array([np.linalg.norm(r) for r in lat_M])
 
+    derived = _derive_parent_for_type_iv(fields, structure)
+    if derived is not None:
+        it_number, kpoint, child_M, child_t = derived
+        _dbg(verbose, f"Type-IV MSG without parent data: parent IT {it_number}, "
+                      f"k = {kpoint}, child transform P = {child_M.tolist()}, "
+                      f"p = {child_t.tolist()}")
+
     # If mCIF lacked standard symmetry fields, auto-detect IT# from the structure.
     if it_number is None:
         it_number = _get_it_number_from_structure(structure)
@@ -1825,6 +1832,69 @@ def _get_it_number_from_structure(structure) -> int:
     return int(dataset.number if hasattr(dataset, 'number') else dataset['number'])
 
 
+def _derive_parent_for_type_iv(fields: dict, structure):
+    """Parent group, k and child→parent transform for an mCIF without
+    _parent_space_group data.
+
+    Returns (it_number, kpoint, child_M, child_t) to use in place of the
+    BNS-number fallback, or None when that fallback is valid (magnetic cell
+    = parent cell).  For a type-IV MSG the anti-translations {1|t}' are lost
+    lattice translations: the parent is the space group of the atomic
+    structure alone (spglib, preferred Hall setting), in a smaller cell, and
+    k is fixed by e^{2πik·t} = −1 on every anti-translation and +1 on the
+    magnetic lattice.
+    """
+    from itertools import product
+    from pymatgen.core import Element
+
+    if fields.get('it_number_source') == 'parent':
+        return None
+
+    cell = (structure.lattice.matrix, structure.frac_coords,
+            [Element(s.specie.symbol).Z for s in structure])
+    ds = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+    if ds is None:
+        raise RuntimeError("spglib could not determine the space group of the structure.")
+    it_number = int(ds.number if hasattr(ds, 'number') else ds['number'])
+    ds = spglib.get_symmetry_dataset(cell, symprec=1e-3,
+                                     hall_number=get_hall_number(it_number))
+    P = np.array(ds.transformation_matrix if hasattr(ds, 'transformation_matrix')
+                 else ds['transformation_matrix'])
+    p = np.array(ds.origin_shift if hasattr(ds, 'origin_shift') else ds['origin_shift'])
+    # spglib: x_std = P x_input + p;  map_atoms_to_parent_cell: r = M.T r + t
+    child_M, child_t = P.T, p
+
+    anti = fields.get('anti_translations', [])
+    n_cent = len(get_centering_translations(it_number))
+    cell_ratio = abs(np.linalg.det(P)) * n_cent   # |T_parent / T_magnetic|
+    if not anti:
+        if cell_ratio > 1 + 1e-3:
+            raise ValueError(
+                f"The atomic structure has a smaller cell than the magnetic cell "
+                f"(parent {ds.international if hasattr(ds, 'international') else it_number}, "
+                f"{cell_ratio:.0f}x smaller) but the mCIF gives no propagation vector or "
+                "parent space group. Add the _parent_space_group and "
+                "_parent_propagation_vector fields.")
+        return None
+
+    t_parent = [P @ t for t in anti]
+    lat_parent = [P[:, i] for i in range(3)]
+    candidates = []
+    for k in product((0, 0.5, 1), repeat=3):
+        k = np.array(k, dtype=float)
+        if not all(np.isclose((k @ v) % 1.0, 0) or np.isclose((k @ v) % 1.0, 1)
+                   for v in lat_parent):
+            continue
+        if all(np.isclose((k @ t) % 1.0, 0.5) for t in t_parent):
+            candidates.append(k)
+    if not candidates:
+        raise ValueError(
+            "Could not derive a propagation vector from the anti-translations "
+            f"{[t.tolist() for t in anti]}; add _parent_propagation_vector to the mCIF.")
+    kpoint = min(candidates, key=lambda k: (np.linalg.norm(k), tuple(-k)))
+    return it_number, kpoint, child_M, child_t
+
+
 def _ensure_conventional_cell(structure, it_number: int, gemmi_moments: dict):
     """Expand the structure to the conventional cell if pymatgen returned only the ASU.
 
@@ -1865,6 +1935,13 @@ def _ensure_conventional_cell(structure, it_number: int, gemmi_moments: dict):
         expanded = PmgStructure.from_spacegroup(
             it_number, structure.lattice, asu_species, asu_coords)
     except Exception:
+        return structure
+    # A genuine ASU expands without collisions.  Overlapping atoms mean the
+    # input was already complete and it_number does not describe this cell
+    # (spglib >= 2.7 raises "too close distance between atoms" on it).
+    d = expanded.distance_matrix
+    np.fill_diagonal(d, np.inf)
+    if len(expanded) > 1 and d.min() < 0.5:
         return structure
 
     # Use spglib on the expanded cell to find which orbit each atom belongs to.
@@ -1932,6 +2009,9 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
         else:
             parent_M, parent_t = np.eye(3), np.zeros(3)
         structure = parse_mcif.get_magnetic_structure(path)
+        derived = _derive_parent_for_type_iv(fields, structure)
+        if derived is not None:
+            it_number, kpoint, child_M, child_t = derived
         if it_number is None:
             it_number = _get_it_number_from_structure(structure)
     else:

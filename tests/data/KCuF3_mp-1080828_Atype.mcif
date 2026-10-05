@@ -1,0 +1,66 @@
+# Created by the Bilbao Crystallographic Server
+# http://www.cryst.ehu.es
+# Date: 05/10/2026 07:06:10
+
+# KCuF3_mp-1080828_conventional_standard_2layer.vasp
+
+# --- Magnetic Structure Data ---
+
+data_8w9LM6Uf
+_audit_creation_date               2026-10-05
+_audit_creation_method             "Bilbao Crystallographic Server"
+###non-st# _data_type "magnetic"
+_space_group_magn.number_BNS  128.408
+_space_group_magn.name_BNS  "?"
+_space_group_magn.transform_BNS_Pp_abc  "a,b,c"
+_cell_length_a                     5.83294
+_cell_length_b                     5.83294
+_cell_length_c                     8.01648
+_cell_angle_alpha                  90.00000
+_cell_angle_beta                   90.00000
+_cell_angle_gamma                  90.00000
+
+loop_
+_space_group_symop_magn_operation.id
+_space_group_symop_magn_operation.xyz
+1   x,y,z,+1
+2   x+1/2,-y+1/2,-z+1/2,+1
+3   -x+1/2,y+1/2,-z+1/2,+1
+4   -x,-y,z,+1
+5   -y+1/2,-x+1/2,-z+1/2,+1
+6   -y,x,z,+1
+7   y,-x,z,+1
+8   y+1/2,x+1/2,-z+1/2,+1
+9   -x,-y,-z,+1
+10   -x+1/2,y+1/2,z+1/2,+1
+11   x+1/2,-y+1/2,z+1/2,+1
+12   x,y,-z,+1
+13   y+1/2,x+1/2,z+1/2,+1
+14   y,-x,-z,+1
+15   -y,x,-z,+1
+16   -y+1/2,-x+1/2,z+1/2,+1
+
+loop_
+_space_group_symop_magn_centering.id
+_space_group_symop_magn_centering.xyz
+1   x,y,z,+1
+2   x,y,z+1/2,-1
+
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+Cu1 Cu 0.00000 0.50000 0.00000 1.0000
+F1 F 0.00000 0.50000 0.25000 1.0000
+F2 F 0.76633 0.26633 0.00000 1.0000
+K1 K 0.00000 0.00000 0.25000 1.0000
+
+loop_
+_atom_site_moment.label
+_atom_site_moment.crystalaxis_x
+_atom_site_moment.crystalaxis_y
+_atom_site_moment.crystalaxis_z
+Cu1 0.000 0.000 -1.000

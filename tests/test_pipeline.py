@@ -114,3 +114,47 @@ class TestLibraryErrorsAreExceptions:
         p.write_text(content[:loop_start])
         with pytest.raises(ValueError, match="[Nn]o nonzero magnetic moments"):
             run_analysis(str(p))
+
+
+class TestTypeIVWithoutParentInfo:
+    """A type-IV mCIF (black-white lattice, e.g. P_c 4/mnc) with no
+    _parent_space_group block: the BNS family number (128) is NOT the parent
+    group, and the magnetic cell is a supercell of the parent.  Previously the
+    pipeline used SG 128 / k=0 on the doubled cell, which made
+    _ensure_conventional_cell re-expand an already-complete structure into
+    overlapping atoms ("too close distance between atoms" on spglib >= 2.7,
+    a silently wrong mGM1+ result on older spglib)."""
+
+    KCUF3 = str(__import__("pathlib").Path(__file__).parent
+                / "data" / "KCuF3_mp-1080828_Atype.mcif")
+
+    def test_anti_translations_parsed(self):
+        import numpy as np
+        from magirrep.parse_mcif import parse_mcif_fields
+        f = parse_mcif_fields(self.KCUF3)
+        assert f['it_number_source'] == 'bns'
+        assert len(f['anti_translations']) == 1
+        np.testing.assert_allclose(f['anti_translations'][0], [0, 0, 0.5])
+
+    def test_parent_derived(self):
+        import numpy as np
+        from magirrep import parse_mcif
+        from magirrep.pipeline import _derive_parent_for_type_iv
+        f = parse_mcif.parse_mcif_fields(self.KCUF3)
+        s = parse_mcif.get_magnetic_structure(self.KCUF3)
+        it_number, kpoint, child_M, child_t = _derive_parent_for_type_iv(f, s)
+        assert it_number == 127          # P4/mbm, c_parent = c_mag / 2
+        np.testing.assert_allclose(kpoint, [0, 0, 0.5])
+        assert np.isclose(abs(np.linalg.det(child_M)), 2)
+
+    def test_magnetic_run(self, capsys):
+        run_analysis(self.KCUF3, displacive_pass=False)
+        out = capsys.readouterr().out
+        assert "P4/mbm" in out
+        assert "mGM1+" not in out
+        assert "‖M - M_rec‖/‖M‖ = 0.0000" in out
+
+    def test_combined_and_displacive_run(self):
+        from magirrep.pipeline import run_displacive_analysis
+        run_analysis(self.KCUF3)
+        run_displacive_analysis(self.KCUF3)
