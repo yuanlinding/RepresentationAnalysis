@@ -36,22 +36,18 @@ def _get_seekpath_labels(it_number: int) -> dict:
 
     try:
         lat_conv, pos_conv, nums_conv = build_reference_crystal(it_number)
-        A_conv = np.array(lat_conv, dtype=float)
+        result = seekpath.get_path((lat_conv, pos_conv, nums_conv))
 
-        # Find primitive cell (may differ from conventional for F, I, A, B, C, R)
-        prim = spglib.find_primitive((lat_conv, pos_conv, nums_conv), symprec=1e-3)
-        A_prim = np.array(prim[0], dtype=float) if prim is not None else A_conv
-
-        # Transformation:  k_prim = k_conv @ inv(A_conv) @ A_prim
-        T = np.linalg.inv(A_conv) @ A_prim        # k_conv → k_prim
-        T_inv = np.linalg.inv(T)                   # k_prim → k_conv
-
-        # High-symmetry k-points from seekpath (in primitive reciprocal fractional)
-        result = seekpath.get_path((A_prim.tolist(), [[0, 0, 0]], [1]))
+        # point_coords are fractional w.r.t. seekpath's own (re-standardised)
+        # reciprocal primitive lattice.  Go through Cartesian into fractional
+        # coordinates of seekpath's conventional cell, which has the standard
+        # ITA axes, i.e. the same conventional reciprocal coords as kpoint.
+        B_prim = np.array(result['reciprocal_primitive_lattice'], dtype=float)
+        A_conv = np.array(result['conv_lattice'], dtype=float)
 
         label_map = {}
         for sp_label, k_prim in result['point_coords'].items():
-            k_conv = np.array(k_prim) @ T_inv
+            k_conv = (np.array(k_prim, dtype=float) @ B_prim) @ A_conv.T / (2 * np.pi)
             bilbao = _sp_to_bilbao(sp_label)
             # Store the raw (unwrapped) conventional k-vector.
             # Do NOT also store the wrapped version: some zone-boundary
@@ -113,11 +109,46 @@ def kpoint_label(kpoint, it_number: int = None) -> str:
             key = tuple(np.round(k, 6))
             if key in label_map:
                 return label_map[key]
-            key_w = tuple(np.round(k % 1.0, 6))
-            if key_w in label_map:
-                return label_map[key_w]
+            lbl = _lookup_equivalent(k, it_number, label_map)
+            if lbl is not None:
+                return lbl
+        if _is_reciprocal_lattice_vector(k, it_number):
+            return 'GM'
+        # Integer but not a primitive reciprocal-lattice vector (centered
+        # lattice zone boundary): the Z³-based heuristic would call it Γ.
+        if np.allclose(k, np.round(k), atol=1e-4) and not np.allclose(k, 0, atol=1e-4):
+            return f"[{k[0]:.3f}_{k[1]:.3f}_{k[2]:.3f}]"
 
     return _kpoint_label_heuristic(kpoint)
+
+
+def _is_reciprocal_lattice_vector(d, it_number: int, tol=1e-4) -> bool:
+    """True if *d* (conventional reciprocal coords) is a vector of the
+    PRIMITIVE reciprocal lattice: integer, and integer dot product with every
+    centering translation.  Reducing modulo Z³ alone is wrong for centered
+    lattices — e.g. (0,0,1) in an I lattice is a zone-boundary point, not Γ."""
+    from magirrep.little_group import get_centering_translations
+    if not np.allclose(d, np.round(d), atol=tol):
+        return False
+    for c in get_centering_translations(it_number):
+        x = float(np.dot(d, c))
+        if abs(x - round(x)) > tol:
+            return False
+    return True
+
+
+def _lookup_equivalent(k, it_number: int, label_map: dict):
+    """Label of a tabulated point equivalent to *k* modulo the primitive
+    reciprocal lattice, trying k itself first and then its star."""
+    from magirrep.little_group import get_parent_sg_operations
+    rotations, _ = get_parent_sg_operations(it_number)
+    eye = np.eye(3, dtype=int)
+    star = [k] + [R.T @ k for R in rotations if not np.array_equal(R, eye)]
+    for kk in star:
+        for key, lbl in label_map.items():
+            if _is_reciprocal_lattice_vector(kk - np.array(key), it_number):
+                return lbl
+    return None
 
 
 def irrep_name(kpoint, sg_number: int, irrep_idx: int, irrep_dim: int,

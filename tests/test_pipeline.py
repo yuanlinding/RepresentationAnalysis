@@ -116,45 +116,105 @@ class TestLibraryErrorsAreExceptions:
             run_analysis(str(p))
 
 
-class TestTypeIVWithoutParentInfo:
-    """A type-IV mCIF (black-white lattice, e.g. P_c 4/mnc) with no
-    _parent_space_group block: the BNS family number (128) is NOT the parent
-    group, and the magnetic cell is a supercell of the parent.  Previously the
-    pipeline used SG 128 / k=0 on the doubled cell, which made
-    _ensure_conventional_cell re-expand an already-complete structure into
-    overlapping atoms ("too close distance between atoms" on spglib >= 2.7,
-    a silently wrong mGM1+ result on older spglib)."""
+class TestParentDerivedFromMoments:
+    """mCIFs with no _parent_space_group block whose magnetic cell is a
+    supercell of the atomic structure's cell.  The parent group comes from
+    spglib and k from how the moments transform under the lost parent
+    translations (m(r+t) = -m(r)  =>  k.t = 1/2).
 
-    KCUF3 = str(__import__("pathlib").Path(__file__).parent
-                / "data" / "KCuF3_mp-1080828_Atype.mcif")
+    - KCuF3_mp-1080828_Atype: P_c4/mnc (BNS 128.408) encoding; the BNS
+      family group is not the parent.  Previously crashed with spglib >= 2.7
+      ("too close distance between atoms") or gave a wrong mGM1+.
+    - KCuF3_bulk_{A,G}_AFM: P1 encoding of the I4/mcm structure.  The lost
+      I-centering is not listed as an anti-translation, so k must come from
+      the moments: A-type flips sign (k != 0), G-type does not (k = 0).
+    """
 
-    def test_anti_translations_parsed(self):
-        import numpy as np
-        from magirrep.parse_mcif import parse_mcif_fields
-        f = parse_mcif_fields(self.KCUF3)
-        assert f['it_number_source'] == 'bns'
-        assert len(f['anti_translations']) == 1
-        np.testing.assert_allclose(f['anti_translations'][0], [0, 0, 0.5])
+    DATA = __import__("pathlib").Path(__file__).parent / "data"
+    MP = str(DATA / "KCuF3_mp-1080828_Atype.mcif")
+    BULK_A = str(DATA / "KCuF3_bulk_A_AFM.mcif")
+    BULK_G = str(DATA / "KCuF3_bulk_G_AFM.mcif")
 
-    def test_parent_derived(self):
-        import numpy as np
+    @staticmethod
+    def _derive(path):
         from magirrep import parse_mcif
-        from magirrep.pipeline import _derive_parent_for_type_iv
-        f = parse_mcif.parse_mcif_fields(self.KCUF3)
-        s = parse_mcif.get_magnetic_structure(self.KCUF3)
-        it_number, kpoint, child_M, child_t = _derive_parent_for_type_iv(f, s)
+        from magirrep.pipeline import _derive_parent_from_structure
+        return _derive_parent_from_structure(
+            parse_mcif.parse_mcif_fields(path),
+            parse_mcif.get_magnetic_structure(path))
+
+    def test_bns_encoded_type_iv(self):
+        import numpy as np
+        it_number, kpoint, child_M, _ = self._derive(self.MP)
         assert it_number == 127          # P4/mbm, c_parent = c_mag / 2
         np.testing.assert_allclose(kpoint, [0, 0, 0.5])
         assert np.isclose(abs(np.linalg.det(child_M)), 2)
 
-    def test_magnetic_run(self, capsys):
-        run_analysis(self.KCUF3, displacive_pass=False)
+    def test_p1_encoded_a_type(self):
+        import numpy as np
+        it_number, kpoint, _, _ = self._derive(self.BULK_A)
+        assert it_number == 140          # I4/mcm
+        # k.(1/2,1/2,1/2) = 1/2 and k integer: the M/Z-type point of the BCT
+        # lattice, e.g. (0,0,1); all such k are equivalent mod T_parent*
+        assert np.allclose(kpoint, np.round(kpoint))
+        assert np.isclose((kpoint @ [0.5, 0.5, 0.5]) % 1, 0.5)
+
+    def test_p1_encoded_g_type_is_gamma(self):
+        import numpy as np
+        it_number, kpoint, _, _ = self._derive(self.BULK_G)
+        assert it_number == 140
+        np.testing.assert_allclose(kpoint, [0, 0, 0])
+
+    def test_inconsistent_signs_rejected(self, tmp_path):
+        import pytest
+        # flip one Cu so the lost centering maps m -> -m on one pair and
+        # m -> +m on the other: not a single k with +/-1 phases
+        txt = open(self.BULK_A).read().replace(
+            "Cu4 -1.000000 0.000000 0.000000", "Cu4 1.000000 0.000000 0.000000")
+        p = tmp_path / "bad.mcif"
+        p.write_text(txt)
+        with pytest.raises(ValueError, match="propagation vector"):
+            run_analysis(str(p), displacive_pass=False)
+
+    @pytest.mark.parametrize("name", ["MP", "BULK_A", "BULK_G"])
+    def test_magnetic_run_reconstructs_moments(self, name, capsys):
+        run_analysis(getattr(self, name), displacive_pass=False)
         out = capsys.readouterr().out
-        assert "P4/mbm" in out
-        assert "mGM1+" not in out
         assert "‖M - M_rec‖/‖M‖ = 0.0000" in out
 
-    def test_combined_and_displacive_run(self):
+    def test_mp_labels(self, capsys):
+        run_analysis(self.MP, displacive_pass=False)
+        out = capsys.readouterr().out
+        assert "P4/mbm" in out and "mGM1+" not in out
+
+    @pytest.mark.parametrize("name", ["MP", "BULK_A"])
+    def test_combined_and_displacive_run(self, name):
         from magirrep.pipeline import run_displacive_analysis
-        run_analysis(self.KCUF3)
-        run_displacive_analysis(self.KCUF3)
+        run_analysis(getattr(self, name))
+        run_displacive_analysis(getattr(self, name))
+
+
+class TestCenteredLatticeKLabels:
+    """k-point labels must use equivalence modulo the PRIMITIVE reciprocal
+    lattice.  (0,0,1) in an I lattice is the M point, not Γ; seekpath points
+    must be converted to conventional coordinates correctly."""
+
+    @pytest.mark.parametrize("k,it_number,label", [
+        ([0, 0, 1], 140, "M"), ([1, 1, 1], 140, "M"), ([0.5, 0.5, 0], 140, "X"),
+        ([0, 0, 0], 140, "GM"), ([1, 1, 0], 140, "GM"),
+        ([1, 0, 0], 225, "X"), ([0.5, 0.5, 0.5], 225, "L"), ([2, 0, 0], 225, "GM"),
+        ([0, 1, 0], 229, "H"), ([0, 0, 0.5], 127, "Z"), ([0.5, 0.5, 0], 136, "M"),
+    ])
+    def test_kpoint_label(self, k, it_number, label):
+        from magirrep.irrep_label import kpoint_label
+        assert kpoint_label(k, it_number) == label
+
+    def test_a_and_g_type_get_different_labels(self, capsys):
+        data = __import__("pathlib").Path(__file__).parent / "data"
+        run_analysis(str(data / "KCuF3_bulk_A_AFM.mcif"), displacive_pass=False)
+        out_a = capsys.readouterr().out
+        run_analysis(str(data / "KCuF3_bulk_G_AFM.mcif"), displacive_pass=False)
+        out_g = capsys.readouterr().out
+        assert "k = (0, 0, 1)  →  M point" in out_a and "at k=Γ" not in out_a
+        assert "Identified: mM" in out_a
+        assert "Identified: mGM" in out_g

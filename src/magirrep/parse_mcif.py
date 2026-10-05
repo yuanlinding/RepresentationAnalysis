@@ -22,8 +22,8 @@ def parse_mcif_fields(path: str) -> dict:
         fields['it_number_source'] = 'parent'
     else:
         # Fallback 1: extract parent SG from BNS number "62.446" → 62.
-        # Only valid when the magnetic cell is the parent cell; for type-IV
-        # groups the pipeline replaces it (see anti_translations below).
+        # Only a fallback: the BNS family group need not be the parent; the
+        # pipeline replaces it with the atomic structure's group.
         bns_val = block.find_value('_space_group_magn.number_bns')
         if bns_val:
             try:
@@ -42,8 +42,6 @@ def parse_mcif_fields(path: str) -> dict:
                 except ValueError:
                     pass
                 break
-
-    fields['anti_translations'] = _parse_anti_translations(block)
 
     # k-vectors: parse ALL rows of the _parent_propagation_vector loop, not
     # just the first.  Bracketed values like "[1/2 1/2 1/2]" trip up gemmi's
@@ -91,36 +89,6 @@ def parse_mcif_fields(path: str) -> dict:
         fields['expected_irrep_small_dim'] = int(irrep_id_loop[0][2]) if len(irrep_id_loop[0]) > 2 and irrep_id_loop[0][2] not in _missing else None
 
     return fields
-
-def _parse_anti_translations(block) -> list:
-    """Return the pure translations combined with time reversal ({1|t}')
-    listed in the magnetic symop loops, as child-cell fractional vectors.
-
-    Their presence makes the MSG type IV: the magnetic cell is a supercell
-    of the parent (paramagnetic) cell, so the BNS family number is not the
-    parent space group and k is nonzero.
-    """
-    from pymatgen.core.operations import SymmOp
-    anti = []
-    for tag in ('_space_group_symop_magn_centering.xyz',
-                '_space_group_symop_magn_operation.xyz',
-                '_space_group_symop.magn_centering_xyz',
-                '_space_group_symop.magn_operation_xyz'):
-        for raw in block.find_values(tag):
-            parts = gemmi.cif.as_string(raw).split(',')
-            if len(parts) != 4 or parts[3].strip() != '-1':
-                continue
-            op = SymmOp.from_xyz_str(','.join(parts[:3]))
-            if not np.allclose(op.rotation_matrix, np.eye(3)):
-                continue
-            t = op.translation_vector % 1.0
-            t[np.isclose(t, 1.0)] = 0.0
-            if np.allclose(t, 0):
-                continue      # 1' itself: grey group, not a lattice change
-            if not any(np.allclose(t, a) for a in anti):
-                anti.append(t)
-    return anti
-
 
 def parse_kvector(kstring: str) -> np.ndarray:
     """

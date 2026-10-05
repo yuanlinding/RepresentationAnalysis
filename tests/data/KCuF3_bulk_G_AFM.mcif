@@ -1,0 +1,112 @@
+# Magnetic CIF (CIF 1.1 syntax)
+data_KCuF3_bulk_G_AFM
+# Fully expanded conventional cell: all 20 atoms explicitly listed.
+# Identity-only (P1 subgroup) encoding; maximal magnetic symmetry is not assigned.
+# Nuclear structure: bulk a-polytype, I4/mcm (No. 140), standard setting.
+# The structural polytype name a is distinct from magnetic A-type ordering.
+# Model magnetic moments are +/-1 mu_B along the conventional a axis.
+# Geometry is fixed for both magnetic models; no magnetic-state relaxation.
+
+_chemical_name_common 'Bulk KCuF3 G-type AFM model'
+_chemical_formula_sum 'K Cu F3'
+_cell_formula_units_Z 4
+_cell_length_a 5.856900
+_cell_length_b 5.856900
+_cell_length_c 7.848700
+_cell_angle_alpha 90
+_cell_angle_beta 90
+_cell_angle_gamma 90
+_cell_volume 269.236135
+
+_publ_section_comment
+;
+Antiparallel Cu moments on every nearest-neighbor Cu-Cu bond, in plane and along c.
+Bulk JT-distorted I4/mcm a-polytype geometry with a=b=5.8569 Angstrom,
+c=7.8487 Angstrom, and equatorial F 8h coordinate x=0.22803.
+These structural parameters are reported by Towler, Dovesi and Saunders,
+Phys. Rev. B 52, 10150-10159 (1995), DOI 10.1103/PhysRevB.52.10150.
+Parent Wyckoff sites: K 4a (0,0,1/4); Cu 4d (0,1/2,0);
+apical F 4b (0,1/2,1/4); equatorial F 8h (x,x+1/2,0).
+The conventional cell contains two Cu planes at z=0 and z=1/2.
+Magnetic moments are normalized model values, not a measured refinement.
+The common spin axis is [100] in the conventional tetragonal cell.
+K and F moments are set to zero. The net cell magnetic moment is zero.
+G-type is an imposed comparison configuration, not asserted to be the ambient bulk ground state.
+All atoms and moments are expanded explicitly using an identity-only
+magnetic symmetry subgroup. No claim of maximal P1 symmetry is made.
+;
+
+loop_
+_citation_id
+_citation_title
+_citation_journal_abbrev
+_citation_journal_volume
+_citation_page_first
+_citation_page_last
+_citation_year
+_citation_doi
+1 'Magnetic interactions and the cooperative Jahn-Teller effect in KCuF3' 'Phys. Rev. B' 52 10150 10159 1995 10.1103/PhysRevB.52.10150
+
+loop_
+_space_group_symop_magn_operation.id
+_space_group_symop_magn_operation.xyz
+1 'x,y,z,+1'
+
+loop_
+_space_group_symop_magn_centering.id
+_space_group_symop_magn_centering.xyz
+1 'x,y,z,+1'
+
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+K1 K 0.00000000 0.00000000 0.25000000 1.0
+K2 K 0.00000000 0.00000000 0.75000000 1.0
+K3 K 0.50000000 0.50000000 0.25000000 1.0
+K4 K 0.50000000 0.50000000 0.75000000 1.0
+Cu1 Cu 0.00000000 0.50000000 0.00000000 1.0
+Cu2 Cu 0.50000000 0.00000000 0.00000000 1.0
+Cu3 Cu 0.00000000 0.50000000 0.50000000 1.0
+Cu4 Cu 0.50000000 0.00000000 0.50000000 1.0
+F1 F 0.00000000 0.50000000 0.25000000 1.0
+F2 F 0.50000000 0.00000000 0.25000000 1.0
+F3 F 0.00000000 0.50000000 0.75000000 1.0
+F4 F 0.50000000 0.00000000 0.75000000 1.0
+F5 F 0.22803000 0.72803000 0.00000000 1.0
+F6 F 0.77197000 0.27197000 0.00000000 1.0
+F7 F 0.27197000 0.22803000 0.00000000 1.0
+F8 F 0.72803000 0.77197000 0.00000000 1.0
+F9 F 0.72803000 0.22803000 0.50000000 1.0
+F10 F 0.27197000 0.77197000 0.50000000 1.0
+F11 F 0.77197000 0.72803000 0.50000000 1.0
+F12 F 0.22803000 0.27197000 0.50000000 1.0
+
+loop_
+_atom_site_moment.label
+_atom_site_moment.crystalaxis_x
+_atom_site_moment.crystalaxis_y
+_atom_site_moment.crystalaxis_z
+K1 0.000000 0.000000 0.000000
+K2 0.000000 0.000000 0.000000
+K3 0.000000 0.000000 0.000000
+K4 0.000000 0.000000 0.000000
+Cu1 1.000000 0.000000 0.000000
+Cu2 -1.000000 0.000000 0.000000
+Cu3 -1.000000 0.000000 0.000000
+Cu4 1.000000 0.000000 0.000000
+F1 0.000000 0.000000 0.000000
+F2 0.000000 0.000000 0.000000
+F3 0.000000 0.000000 0.000000
+F4 0.000000 0.000000 0.000000
+F5 0.000000 0.000000 0.000000
+F6 0.000000 0.000000 0.000000
+F7 0.000000 0.000000 0.000000
+F8 0.000000 0.000000 0.000000
+F9 0.000000 0.000000 0.000000
+F10 0.000000 0.000000 0.000000
+F11 0.000000 0.000000 0.000000
+F12 0.000000 0.000000 0.000000

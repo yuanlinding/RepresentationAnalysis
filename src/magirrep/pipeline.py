@@ -11,7 +11,7 @@ import spglib
 
 from magirrep import parse_mcif, mag_rep, irrep_decompose, irrep_label, bilbao_match
 from magirrep.little_group import (build_reference_crystal, get_hall_number,
-                                   get_centering_translations)
+                                   get_centering_translations, _sgattr)
 
 
 @contextlib.contextmanager
@@ -572,7 +572,7 @@ def _print_propagation_and_lg(kpoint, mapping_little_group, rotations, translati
     co_group = _little_group_point_group(mapping_little_group, rotations, translations,
                                          kpoint)
     kpt      = np.asarray(kpoint, dtype=float)
-    is_gamma = np.allclose(kpt % 1.0, 0.0, atol=1e-4)
+    is_gamma = irrep_label._is_reciprocal_lattice_vector(kpt, it_number)
     dedup    = _dedup_lg_ops(mapping_little_group, rotations)
     n_coset  = len(dedup)          # = |G⁰_k|
 
@@ -1451,10 +1451,10 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
     lat_M     = structure.lattice.matrix
     lat_norms = np.array([np.linalg.norm(r) for r in lat_M])
 
-    derived = _derive_parent_for_type_iv(fields, structure)
+    derived = _derive_parent_from_structure(fields, structure)
     if derived is not None:
         it_number, kpoint, child_M, child_t = derived
-        _dbg(verbose, f"Type-IV MSG without parent data: parent IT {it_number}, "
+        _dbg(verbose, f"No parent data in mCIF: parent IT {it_number} (spglib), "
                       f"k = {kpoint}, child transform P = {child_M.tolist()}, "
                       f"p = {child_t.tolist()}")
 
@@ -1832,66 +1832,121 @@ def _get_it_number_from_structure(structure) -> int:
     return int(dataset.number if hasattr(dataset, 'number') else dataset['number'])
 
 
-def _derive_parent_for_type_iv(fields: dict, structure):
+def _derive_parent_from_structure(fields: dict, structure, tol: float = 1e-3):
     """Parent group, k and child→parent transform for an mCIF without
-    _parent_space_group data.
+    explicit parent data (no _parent_space_group block).
 
-    Returns (it_number, kpoint, child_M, child_t) to use in place of the
-    BNS-number fallback, or None when that fallback is valid (magnetic cell
-    = parent cell).  For a type-IV MSG the anti-translations {1|t}' are lost
-    lattice translations: the parent is the space group of the atomic
-    structure alone (spglib, preferred Hall setting), in a smaller cell, and
-    k is fixed by e^{2πik·t} = −1 on every anti-translation and +1 on the
-    magnetic lattice.
+    Returns (it_number, kpoint, child_M, child_t), or None when the file
+    names its parent (or, via _symmetry_Int_Tables_number, the crystal's own
+    group — those files may list only the ASU, so spglib cannot be trusted).
+
+    The parent is the space group of the atomic structure (spglib, preferred
+    Hall setting).  The BNS number is not used: it gives the magnetic group's
+    family, which is a subgroup of the parent and, for type-IV groups, lives
+    in a supercell.  When the magnetic cell is a supercell of the parent, k
+    follows from the moments: every parent translation t lost in the
+    magnetic cell must map m(r) to ±m(r+t), i.e. e^{2πik·t} = ±1.  This
+    works whether or not the mCIF lists those translations as {1|t}'
+    (MSG-encoded type-IV files do; P1-encoded files cannot).
     """
     from itertools import product
     from pymatgen.core import Element
 
-    if fields.get('it_number_source') == 'parent':
+    if fields.get('it_number_source') in ('parent', 'symmetry_tag'):
         return None
 
     cell = (structure.lattice.matrix, structure.frac_coords,
             [Element(s.specie.symbol).Z for s in structure])
-    ds = spglib.get_symmetry_dataset(cell, symprec=1e-3)
+    ds = spglib.get_symmetry_dataset(cell, symprec=tol)
     if ds is None:
         raise RuntimeError("spglib could not determine the space group of the structure.")
-    it_number = int(ds.number if hasattr(ds, 'number') else ds['number'])
-    ds = spglib.get_symmetry_dataset(cell, symprec=1e-3,
+    it_number = int(_sgattr(ds, 'number'))
+    ds = spglib.get_symmetry_dataset(cell, symprec=tol,
                                      hall_number=get_hall_number(it_number))
-    P = np.array(ds.transformation_matrix if hasattr(ds, 'transformation_matrix')
-                 else ds['transformation_matrix'])
-    p = np.array(ds.origin_shift if hasattr(ds, 'origin_shift') else ds['origin_shift'])
+    P = np.array(_sgattr(ds, 'transformation_matrix'))
+    p = np.array(_sgattr(ds, 'origin_shift'))
     # spglib: x_std = P x_input + p;  map_atoms_to_parent_cell: r = M.T r + t
     child_M, child_t = P.T, p
+    P_inv = np.linalg.inv(P)
 
-    anti = fields.get('anti_translations', [])
-    n_cent = len(get_centering_translations(it_number))
-    cell_ratio = abs(np.linalg.det(P)) * n_cent   # |T_parent / T_magnetic|
-    if not anti:
-        if cell_ratio > 1 + 1e-3:
+    def _wrap(v):
+        v = np.asarray(v, dtype=float) % 1.0
+        v[np.isclose(v, 1.0, atol=tol)] = 0.0
+        return v
+
+    # Parent translations modulo the magnetic lattice, in child coordinates:
+    # closure of the parent basis vectors and centerings under addition.
+    gens = [_wrap(P_inv @ g) for g in
+            list(np.eye(3)) + [np.asarray(c, float) for c in
+                               get_centering_translations(it_number)]]
+    lost = [np.zeros(3)]
+    grew = True
+    while grew:
+        grew = False
+        for a in list(lost):
+            for g in gens:
+                v = _wrap(a + g)
+                if not any(np.allclose(v, b, atol=tol) for b in lost):
+                    lost.append(v)
+                    grew = True
+    lost = lost[1:]
+
+    pos = np.array([_wrap(s.frac_coords) for s in structure])
+    species = [s.species_string for s in structure]
+    moms = []
+    for s in structure:
+        m = s.properties.get('magmom')
+        moms.append(np.zeros(3) if m is None else
+                    np.array(list(m), float) if hasattr(m, '__iter__') else
+                    np.array([0.0, 0.0, float(m)]))
+
+    def _phase(t):
+        """+1 / -1 if translating by t maps every moment to ±itself."""
+        phase = None
+        for i, m in enumerate(moms):
+            if np.linalg.norm(m) < tol:
+                continue
+            target = _wrap(pos[i] + t)
+            js = [j for j in range(len(pos)) if species[j] == species[i]
+                  and np.allclose((pos[j] - target + 0.5) % 1.0 - 0.5, 0, atol=tol)]
+            if not js:
+                return None
+            for sgn in (1, -1):
+                if np.allclose(moms[js[0]], sgn * m, atol=tol):
+                    if phase not in (None, sgn):
+                        return None
+                    phase = sgn
+                    break
+            else:
+                return None
+        return 1 if phase is None else phase
+
+    conditions = []    # (t in parent coords, required k·t mod 1)
+    for t in lost:
+        ph = _phase(t)
+        if ph is None:
             raise ValueError(
-                f"The atomic structure has a smaller cell than the magnetic cell "
-                f"(parent {ds.international if hasattr(ds, 'international') else it_number}, "
-                f"{cell_ratio:.0f}x smaller) but the mCIF gives no propagation vector or "
-                "parent space group. Add the _parent_space_group and "
+                "The magnetic cell is a supercell of the atomic structure's cell, but "
+                f"translating by {np.round(t, 4).tolist()} (magnetic-cell coordinates) "
+                "does not map the moments to ±themselves, so no single propagation "
+                "vector describes the order. Add the _parent_space_group and "
                 "_parent_propagation_vector fields.")
-        return None
+        conditions.append((P @ t, 0.0 if ph == 1 else 0.5))
 
-    t_parent = [P @ t for t in anti]
-    lat_parent = [P[:, i] for i in range(3)]
+    mag_lattice = [P[:, i] for i in range(3)]
     candidates = []
     for k in product((0, 0.5, 1), repeat=3):
         k = np.array(k, dtype=float)
-        if not all(np.isclose((k @ v) % 1.0, 0) or np.isclose((k @ v) % 1.0, 1)
-                   for v in lat_parent):
+        if not all(np.isclose(np.cos(2 * np.pi * (k @ v)), 1) for v in mag_lattice):
             continue
-        if all(np.isclose((k @ t) % 1.0, 0.5) for t in t_parent):
+        if all(np.isclose((k @ t - want) % 1.0, 0) or np.isclose((k @ t - want) % 1.0, 1)
+               for t, want in conditions):
             candidates.append(k)
     if not candidates:
         raise ValueError(
-            "Could not derive a propagation vector from the anti-translations "
-            f"{[t.tolist() for t in anti]}; add _parent_propagation_vector to the mCIF.")
-    kpoint = min(candidates, key=lambda k: (np.linalg.norm(k), tuple(-k)))
+            "Could not derive a propagation vector from the moment pattern; add "
+            "_parent_propagation_vector to the mCIF.")
+    kpoint = min(candidates, key=lambda k: (np.linalg.norm(k), tuple(k)))
     return it_number, kpoint, child_M, child_t
 
 
@@ -2009,7 +2064,7 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
         else:
             parent_M, parent_t = np.eye(3), np.zeros(3)
         structure = parse_mcif.get_magnetic_structure(path)
-        derived = _derive_parent_for_type_iv(fields, structure)
+        derived = _derive_parent_from_structure(fields, structure)
         if derived is not None:
             it_number, kpoint, child_M, child_t = derived
         if it_number is None:
