@@ -75,3 +75,30 @@ class TestPropagationVectors:
         path = _write_with_k_rows(tmp_path, ["k1 [0 0 1/2]", "k2 [1/2 0 0]"])
         with pytest.raises(ValueError, match="[Mm]ulti-k"):
             run_displacive_analysis(path)
+
+
+class TestParseTransform:
+    """Direct unit tests for parse_transform (pin behavior before refactors)."""
+
+    def test_identity_with_shift(self):
+        from magirrep.parse_mcif import parse_transform
+        M, t = parse_transform("a,b,c;-1/4,1/4,0")
+        np.testing.assert_allclose(M, np.eye(3))
+        np.testing.assert_allclose(t, [-0.25, 0.25, 0.0])
+
+    def test_doubled_cell(self):
+        from magirrep.parse_mcif import parse_transform
+        M, t = parse_transform("2a,2b,2c;0,0,0")
+        np.testing.assert_allclose(M, 2 * np.eye(3))
+        np.testing.assert_allclose(t, [0.0, 0.0, 0.0])
+
+    def test_no_semicolon_means_zero_shift(self):
+        from magirrep.parse_mcif import parse_transform
+        M, t = parse_transform("a+b,-a+b,c")
+        np.testing.assert_allclose(M, [[1, 1, 0], [-1, 1, 0], [0, 0, 1]])
+        np.testing.assert_allclose(t, [0.0, 0.0, 0.0])
+
+    def test_too_many_semicolons_raises(self):
+        from magirrep.parse_mcif import parse_transform
+        with pytest.raises(ValueError):
+            parse_transform("a,b,c;0,0,0;1,2,3")

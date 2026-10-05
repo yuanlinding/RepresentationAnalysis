@@ -286,12 +286,6 @@ def fetch_repres(sg_number: int, kpoint) -> Optional[dict]:
         _CACHE[key] = None
         return None
 
-    try:
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    except Exception:
-        pass
-
     bb = _bravais_letter(sg_number)
     kx, ky, kz = float(kpoint[0]), float(kpoint[1]), float(kpoint[2])
 
@@ -303,7 +297,7 @@ def fetch_repres(sg_number: int, kpoint) -> Optional[dict]:
     ]
     for url, params in attempts:
         try:
-            resp = requests.get(url, params=params, timeout=15, verify=False)
+            resp = requests.get(url, params=params, timeout=15)
             if resp.status_code != 200:
                 continue
             result = _parse_repres_html(resp.text)

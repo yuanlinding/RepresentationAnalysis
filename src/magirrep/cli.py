@@ -62,13 +62,17 @@ def main(argv=None):
         stem = os.path.splitext(os.path.basename(args.mcif_file))[0]
         out_file = f"{stem}_magirrep.txt"
 
-    if args.displacive:
-        run_displacive_analysis(args.mcif_file, kvector_str=args.kvector,
-                                verbose=args.verbose, output_file=out_file,
-                                distort_amplitude=args.distort,
-                                keep_magnetic=args.keep_magnetic,
-                                out_dir=args.out_dir)
-    else:
-        # Default: combined magnetic+displacive; --magnetic suppresses the displacive pass
-        run_analysis(args.mcif_file, verbose=args.verbose, output_file=out_file,
-                     displacive_pass=(not args.magnetic))
+    try:
+        if args.displacive:
+            run_displacive_analysis(args.mcif_file, kvector_str=args.kvector,
+                                    verbose=args.verbose, output_file=out_file,
+                                    distort_amplitude=args.distort,
+                                    keep_magnetic=args.keep_magnetic,
+                                    out_dir=args.out_dir)
+        else:
+            # Default: combined magnetic+displacive; --magnetic suppresses the displacive pass
+            run_analysis(args.mcif_file, verbose=args.verbose, output_file=out_file,
+                         displacive_pass=(not args.magnetic))
+    except (ValueError, RuntimeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)

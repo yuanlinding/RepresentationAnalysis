@@ -82,14 +82,23 @@ def _deduplicate_positions(positions: np.ndarray, magmoms: np.ndarray = None,
     Tuple of whichever of (positions, magmoms, labels) were non-None, or just
     positions if all extras are None.
     """
-    unique: dict = {}  # key -> (original_index, squared_offset_norm)
+    # Pairwise comparison modulo the lattice (diff -= round(diff)) rather than
+    # integer binning: binning treats 0.99999/0.00001 as distinct and splits
+    # within-tol pairs that straddle a bin edge.
+    kept: list = []  # [original_index, squared_offset_norm]
     for i, r in enumerate(positions):
-        key = tuple(np.round(r / tol).astype(int))
         L_norm_sq = int(np.sum(offsets[i] ** 2)) if offsets is not None else 0
-        if key not in unique or L_norm_sq < unique[key][1]:
-            unique[key] = (i, L_norm_sq)
+        for entry in kept:
+            d = positions[entry[0]] - r
+            d -= np.round(d)
+            if np.max(np.abs(d)) < tol:
+                if L_norm_sq < entry[1]:
+                    entry[0], entry[1] = i, L_norm_sq
+                break
+        else:
+            kept.append([i, L_norm_sq])
 
-    kept_idx = sorted(v[0] for v in unique.values())
+    kept_idx = sorted(e[0] for e in kept)
 
     unique_pos = positions[kept_idx] if kept_idx else np.zeros((0, 3))
     if magmoms is not None and labels is not None:
@@ -979,14 +988,39 @@ def _print_decomposition(active_irreps, irreps, n_mu_array, bilbao_labels,
         print()
 
 
-def _scale_to_integers(v, tol=1e-4):
-    """Scale a real vector so its smallest nonzero |component| = 1.
+def _phase_normalize(v, tol=1e-4):
+    """Rotate the arbitrary global phase of *v* so its largest component is
+    real-positive.  A constant-phase vector becomes purely real this way."""
+    v = np.asarray(v, dtype=complex)
+    i_max = int(np.argmax(np.abs(v)))
+    a = v[i_max]
+    if abs(a) < tol:
+        return v
+    return v * (np.conj(a) / abs(a))
 
-    Returns an integer array when the rescaled values are all close to
-    integers (|error| < 0.02 and max ≤ 20); otherwise normalises by the
-    maximum absolute value.
+
+def _scale_to_integers(v, tol=1e-4):
+    """Scale a vector so its smallest nonzero |component| = 1.
+
+    The arbitrary global phase is removed first; if the result is real it is
+    returned as an integer array when the rescaled values are all close to
+    integers (|error| < 0.02 and max ≤ 20), otherwise normalised by the
+    maximum absolute value.  Genuinely complex vectors keep their imaginary
+    parts (returned as a complex array) instead of being silently truncated.
     """
-    v_real = np.real(v).copy()
+    v = _phase_normalize(v, tol)
+    if np.max(np.abs(v.imag)) >= tol:
+        mags = np.abs(v)
+        nonzero = mags[mags > tol]
+        if len(nonzero) == 0:
+            return v.real
+        v_sc  = v / np.min(nonzero)
+        v_rnd = np.round(v_sc.real) + 1j * np.round(v_sc.imag)
+        if np.allclose(v_sc, v_rnd, atol=0.02) and np.max(np.abs(v_rnd)) <= 20:
+            return v_rnd
+        return v / np.max(mags)
+
+    v_real = v.real.copy()
     nonzero_abs = np.abs(v_real[np.abs(v_real) > tol])
     if len(nonzero_abs) == 0:
         return v_real
@@ -1000,7 +1034,14 @@ def _scale_to_integers(v, tol=1e-4):
 
 
 def _fmt_bv_val(x):
-    """Format one basis-vector component as a compact integer or decimal."""
+    """Format one basis-vector component as a compact integer or decimal.
+    Complex components render as 'a+bi'."""
+    if isinstance(x, (complex, np.complexfloating)):
+        re, im = float(np.real(x)), float(np.imag(x))
+        if abs(im) < 0.02:
+            return _fmt_bv_val(re)
+        sign = '+' if im >= 0 else '-'
+        return f"{_fmt_bv_val(re)}{sign}{_fmt_bv_val(abs(im))}i"
     if isinstance(x, (int, np.integer)):
         return str(int(x))
     iv = int(round(float(x)))
@@ -1083,7 +1124,7 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
                     if np.all(np.abs(site_vals) < 1e-4):
                         continue  # this BV has no weight at this site
                     global_bv = bv_numbers[(idx, i)]
-                    scaled = _scale_to_integers(np.real(site_vals))
+                    scaled = _scale_to_integers(site_vals)
                     bv_label = f"ψ{global_bv}"
                     ir_field = lbl if first_at_site else ""
                     row = f"  {ir_field:<{ir_w}}  {bv_label:<{bv_w}}"
@@ -1131,7 +1172,7 @@ def _print_basis_vectors(active_irreps, all_basis, atom_labels, parent_positions
 
         for i, v in enumerate(basis_vecs):
             global_bv = bv_numbers[(idx, i)]
-            v_sc      = _scale_to_integers(np.real(v))
+            v_sc      = _scale_to_integers(v)
             bv_label  = f"ψ{global_bv}"
             ir_field  = lbl if i == 0 else ""
             row = f"  {ir_field:<{ir_w}}  {bv_label:<{bv_w}}"
@@ -1285,7 +1326,7 @@ def _format_sk_constraints(irrep_idx, n_mu, eta, all_basis, atom_labels, parent_
     param_names = ['u', 'v', 'w', 'p', 'q', 'r', 's', 't', 'a', 'b'][:d]
 
     # Scale each basis vector to smallest-integer representation
-    scaled = [_scale_to_integers(np.real(bv)) for bv in basis_vecs]
+    scaled = [_scale_to_integers(bv) for bv in basis_vecs]
 
     prefix = "active irrep" if mode == 'magnetic' else "irrep"
     print(f"  Fourier coefficient constraints  "
@@ -1302,7 +1343,11 @@ def _format_sk_constraints(irrep_idx, n_mu, eta, all_basis, atom_labels, parent_
         for c in range(3):
             terms = []
             for sc, pname in zip(scaled, param_names):
-                coef = float(sc[3 * j + c])
+                z = complex(sc[3 * j + c])
+                if abs(z.imag) > 1e-4:
+                    terms.append(f"+({_fmt_bv_val(z)}){pname}")
+                    continue
+                coef = z.real
                 iv = int(round(coef))
                 if abs(coef - iv) > 0.02:
                     if abs(coef) > 1e-4:
@@ -1511,8 +1556,7 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
     magmoms       = np.array(magmoms)
 
     if len(mag_positions) == 0:
-        print("No nonzero magnetic moments found in the structure.")
-        sys.exit(1)
+        raise ValueError("No nonzero magnetic moments found in the structure.")
 
     _dbg_atoms(verbose, "Magnetic atoms from mCIF (crystal-axis coords, |m|>0.01):",
                mag_positions, magmoms)
@@ -1539,8 +1583,7 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
                parent_positions, parent_magmoms)
 
     if len(parent_positions) == 0:
-        print("No magnetic positions found in primitive cell after transformation.")
-        sys.exit(1)
+        raise ValueError("No magnetic positions found in primitive cell after transformation.")
 
     # ── 5. Get irreps from spgrep ─────────────────────────────────────────────
     irreps, rotations, translations, mapping_little_group = irrep_decompose.get_little_group_irreps(
@@ -1552,8 +1595,7 @@ def run_analysis(mcif_path: str, verbose: bool = False, output_file: str = None,
                   f"{len(irreps)} irreps")
 
     if len(irreps) == 0:
-        print("Spgrep returned no irreps.")
-        sys.exit(1)
+        raise RuntimeError("Spgrep returned no irreps.")
 
     # Centering translations: atom matching must be done modulo the PRIMITIVE
     # lattice, otherwise centered lattices at zone-boundary k lose character
@@ -1922,8 +1964,7 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
     all_magmoms   = np.array(all_magmoms)
 
     if len(all_positions) == 0:
-        print("No atoms found in the structure.")
-        import sys; sys.exit(1)
+        raise ValueError("No atoms found in the structure.")
 
     _dbg(verbose, f"Total atoms from structure: {len(all_positions)}")
 
@@ -1944,8 +1985,7 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
     _dbg(verbose, f"Primitive selection: {n_before_prim} → {len(parent_positions)} atoms")
 
     if len(parent_positions) == 0:
-        print("No atoms found in primitive cell after transformation.")
-        import sys; sys.exit(1)
+        raise ValueError("No atoms found in primitive cell after transformation.")
 
     N_prim = len(parent_positions)
 
@@ -1959,8 +1999,7 @@ def run_displacive_analysis(path: str, kvector_str: str = None, verbose: bool = 
                   f"{len(irreps)} irreps")
 
     if len(irreps) == 0:
-        print("Spgrep returned no irreps.")
-        import sys; sys.exit(1)
+        raise RuntimeError("Spgrep returned no irreps.")
 
     # Atom matching modulo the PRIMITIVE lattice (see run_analysis).
     centerings = get_centering_translations(it_number)

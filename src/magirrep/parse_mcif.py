@@ -120,15 +120,7 @@ def parse_transform(transform_str: str):
     else:
         raise ValueError(f"Cannot parse transform string: {transform_str}")
     
-    # Let's write a simple custom parser since a,b,c format is very standard
-    # e.g., '2x,2y,2z', '-1/4,1/4,0'
-    try:
-        linear_op = gemmi.Op(linear_part)
-        M = np.array(linear_op.rot) / dict(gemmi.Op().rot_denominator())[1] # usually 1 or 24, gemmi.Op.rot has some denominator. Actually gemmi.Op.float_rot() is easier? No float rot in python bindings. Let's just do it manually.
-    except:
-        pass
-        
-    # We will just use SymmOp from pymatgen which natively parses these
+    # SymmOp from pymatgen natively parses these expressions
     from pymatgen.core.operations import SymmOp
     # It parses "x+1/2, y, z" etc.
     # We construct "x_expr, y_expr, z_expr"

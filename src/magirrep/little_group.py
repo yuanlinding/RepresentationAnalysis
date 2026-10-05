@@ -5,6 +5,13 @@ import numpy as np
 _HALL_NUMBER_CACHE = {}
 
 
+def _sgattr(obj, key):
+    """Read a field from an spglib result: attribute interface first
+    (spglib ≥ 2.5), dict fallback for older versions (avoids the
+    dict-interface DeprecationWarning on new spglib)."""
+    return getattr(obj, key) if hasattr(obj, key) else obj[key]
+
+
 def get_hall_number(it_number: int) -> int:
     """
     Maps an IT space group number (1-230) to the preferred Hall number (1-530).
@@ -18,9 +25,8 @@ def get_hall_number(it_number: int) -> int:
         all_halls: dict = defaultdict(list)
         for hall_no in range(1, 531):
             sg_type = spglib.get_spacegroup_type(hall_no)
-            # Support both old dict and new attribute interface
-            it_no = sg_type['number'] if hasattr(sg_type, '__getitem__') else sg_type.number
-            choice = sg_type['choice'] if hasattr(sg_type, '__getitem__') else sg_type.choice
+            it_no = _sgattr(sg_type, 'number')
+            choice = _sgattr(sg_type, 'choice')
             all_halls[it_no].append((hall_no, choice))
         for it_no, candidates in all_halls.items():
             # Prefer origin choice '2' (centrosymmetric origin); fall back to first
@@ -45,7 +51,7 @@ def get_centering_translations(it_number: int) -> list:
     sg_ops = spglib.get_symmetry_from_database(hall_no)
     eye3 = np.eye(3, dtype=int)
     centering = [np.zeros(3)]
-    for R, t in zip(sg_ops['rotations'], sg_ops['translations']):
+    for R, t in zip(_sgattr(sg_ops, 'rotations'), _sgattr(sg_ops, 'translations')):
         if np.allclose(R, eye3, atol=1e-5):
             ct = t % 1.0
             if not any(np.allclose(ct, c, atol=1e-5) for c in centering):
@@ -84,8 +90,8 @@ def build_reference_crystal(it_number: int):
     """
     hall_no = get_hall_number(it_number)
     dataset = spglib.get_symmetry_from_database(hall_no)
-    rots = dataset['rotations']
-    trans = dataset['translations']
+    rots = _sgattr(dataset, 'rotations')
+    trans = _sgattr(dataset, 'translations')
 
     def _orbit(r0):
         seen = []
@@ -118,7 +124,7 @@ def get_parent_sg_operations(it_number: int):
     if dataset is None:
         raise RuntimeError(f"Could not retrieve symmetry operations for Hall number {hall_no}")
 
-    return dataset['rotations'], dataset['translations']
+    return _sgattr(dataset, 'rotations'), _sgattr(dataset, 'translations')
 
 
 def find_little_group(rotations: np.ndarray, translations: np.ndarray, kpoint: np.ndarray, tol=1e-5):
